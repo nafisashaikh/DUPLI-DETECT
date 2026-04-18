@@ -9,6 +9,24 @@ Complete full-stack system for detecting duplicate records in multilingual datas
 - DB: Firebase Firestore (with in-memory fallback for local testing)
 - NLP model: sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`
 
+## Configuration (No Hard-Coding)
+
+Backend (environment variables):
+
+- `MODEL_NAME` (default: `paraphrase-multilingual-MiniLM-L12-v2`)
+- `DUPLICATE_THRESHOLD` (default: `0.70`, range `0..1`)
+- `USE_SQLITE` (default: `true`) — enables persistent local storage when Firebase is not configured
+- `SQLITE_PATH` (default: `backend/duplidetect.sqlite`) — path to the SQLite database file
+
+Frontend (environment variables):
+
+- `NEXT_PUBLIC_API_URL` (default: `http://127.0.0.1:8000`)
+- `NEXT_PUBLIC_DEFAULT_THRESHOLD` (default: `0.7`)
+  - You may also set it as a percent like `70`.
+- `NEXT_PUBLIC_BULK_CHUNK_SIZE` (default: `200`)
+
+Tip: copy `.env.example` → `.env.local` for local overrides.
+
 ## Implemented Features
 
 ### 1) Duplicate Detection (Core)
@@ -127,7 +145,8 @@ Request:
 
 ```json
 {
-  "text": "Login issue"
+  "text": "Login issue",
+  "threshold": 0.7
 }
 ```
 
@@ -217,3 +236,28 @@ $env:FIREBASE_CREDENTIALS="C:\path\to\firebase-credentials.json"
 - Language detection is best-effort (`langdetect`) and deterministic seed is enabled.
 - Duplicate threshold default is `0.70`.
 - Embedding model loads lazily on first request.
+
+## Evaluation (PS Submission Helper)
+
+Run a quick offline evaluation on labeled multilingual pairs:
+
+```powershell
+cd backend
+python evaluate.py --pairs eval_pairs.jsonl --threshold 0.70
+```
+
+The script prints per-pair similarity + a final summary with precision/recall/F1.
+
+To automatically recommend a threshold (best F1 on your labeled set):
+
+```powershell
+cd backend
+python evaluate.py --pairs eval_pairs.jsonl --sweep
+```
+
+To try a different multilingual model for your PS comparison:
+
+```powershell
+cd backend
+python evaluate.py --pairs eval_pairs.jsonl --sweep --model sentence-transformers/LaBSE
+```

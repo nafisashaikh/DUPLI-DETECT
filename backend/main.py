@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import unicodedata
+import uuid
 from typing import Any, Optional
 
 import numpy as np
@@ -20,11 +22,88 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 _model = None
 _db = None   # Firestore client (optional — gracefully degraded)
+_sqlite = None  # SQLite connection (optional — persistent local fallback)
 _langdetect_seeded = False
 
+# ---------------------------------------------------------------------------
+# Embedding index cache (in-process)
+# Speeds up search + duplicate checks dramatically for bulk uploads.
+# ---------------------------------------------------------------------------
+_emb_dim: Optional[int] = None
+_emb_index_dirty = True
+_emb_index_ids: list[str] = []
+_emb_index_texts: list[str] = []
+_emb_index_langs: list[str] = []
+_emb_index_mat: Optional[np.ndarray] = None  # shape (N, D), float32
+
+def _get_emb_dim() -> int:
+    global _emb_dim
+    if _emb_dim is not None:
+        return _emb_dim
+    try:
+        model = _get_model()
+        dim = int(model.get_sentence_embedding_dimension())
+    except Exception:
+        # Fallback for common MiniLM embedding dim
+        dim = 384
+    _emb_dim = dim
+    return dim
+
 COLLECTION = "records"
-DUPLICATE_THRESHOLD = 0.70          # 70 % similarity → warn as duplicate
-MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+def _env_str(name: str, default: str) -> str:
+    return os.environ.get(name) or default
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+DUPLICATE_THRESHOLD = max(0.0, min(1.0, _env_float("DUPLICATE_THRESHOLD", 0.70)))
+MODEL_NAME = _env_str("MODEL_NAME", "paraphrase-multilingual-MiniLM-L12-v2")
+
+USE_SQLITE = _env_bool("USE_SQLITE", True)
+SQLITE_PATH = os.environ.get(
+    "SQLITE_PATH",
+    os.path.join(os.path.dirname(__file__), "duplidetect.sqlite"),
+)
+
+def _get_sqlite():
+    """Persistent local fallback store (useful for hackathons / demos)."""
+    global _sqlite
+    if not USE_SQLITE:
+        return None
+    if _sqlite is not None:
+        return _sqlite
+    try:
+        conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS records (
+              id TEXT PRIMARY KEY,
+              text TEXT NOT NULL,
+              language TEXT,
+              embedding TEXT
+            )
+            """
+        )
+        conn.commit()
+        _sqlite = conn
+        return _sqlite
+    except Exception as exc:
+        print(f"[SQLite] Could not initialise: {exc}")
+        _sqlite = None
+        return None
 
 # ---------------------------------------------------------------------------
 # Firebase initialisation (graceful — works without credential file)
@@ -77,6 +156,14 @@ def preprocess(text: str) -> str:
 # ---------------------------------------------------------------------------
 def embed(text: str) -> np.ndarray:
     return _get_model().encode(preprocess(text), normalize_embeddings=True)
+
+def embed_many(texts: list[str]) -> np.ndarray:
+    arr = _get_model().encode(
+        [preprocess(t) for t in texts],
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    return np.asarray(arr, dtype=np.float32)
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))          # vectors already L2-normalised
@@ -179,6 +266,7 @@ class SearchResponse(BaseModel):
 
 class AddRecordRequest(BaseModel):
     text: str
+    threshold: Optional[float] = None
 
 class AddRecordResponse(BaseModel):
     id: str
@@ -193,11 +281,67 @@ class Record(BaseModel):
     text: str
     language: str
 
+class BulkAddRequest(BaseModel):
+    texts: list[str]
+    threshold: Optional[float] = DUPLICATE_THRESHOLD
+
+class BulkAddResponse(BaseModel):
+    total: int
+    added: int
+    duplicates: int
+    failed: int
+    results: list[AddRecordResponse]
+
 # ---------------------------------------------------------------------------
 # In-memory fallback store when Firebase is unavailable
 # ---------------------------------------------------------------------------
 _memory_store: dict[str, dict[str, Any]] = {}
 _id_counter = 0
+
+def _mark_index_dirty():
+    global _emb_index_dirty
+    _emb_index_dirty = True
+
+def _refresh_embedding_index():
+    global _emb_index_dirty, _emb_index_ids, _emb_index_texts, _emb_index_langs, _emb_index_mat
+    records = _all_records()
+    ids: list[str] = []
+    texts: list[str] = []
+    langs: list[str] = []
+    embs: list[np.ndarray] = []
+
+    for rec in records:
+        rid = rec.get("id")
+        text = rec.get("text")
+        if not rid or not isinstance(text, str) or not text.strip():
+            continue
+
+        emb = rec.get("embedding")
+        if emb is None:
+            emb_vec = np.asarray(embed(text), dtype=np.float32)
+        else:
+            emb_vec = np.asarray(emb, dtype=np.float32)
+
+        ids.append(str(rid))
+        texts.append(text)
+        langs.append(rec.get("language", "unknown"))
+        embs.append(emb_vec)
+
+    if embs:
+        mat = np.vstack(embs).astype(np.float32)
+    else:
+        mat = np.zeros((0, _get_emb_dim()), dtype=np.float32)
+
+    _emb_index_ids = ids
+    _emb_index_texts = texts
+    _emb_index_langs = langs
+    _emb_index_mat = mat
+    _emb_index_dirty = False
+
+def _get_embedding_index():
+    if _emb_index_dirty or _emb_index_mat is None:
+        _refresh_embedding_index()
+    return _emb_index_ids, _emb_index_texts, _emb_index_langs, _emb_index_mat  # type: ignore[return-value]
 
 def _next_id() -> str:
     global _id_counter
@@ -209,6 +353,22 @@ def _all_records() -> list[dict[str, Any]]:
     if db:
         docs = db.collection(COLLECTION).stream()
         return [{"id": d.id, **d.to_dict()} for d in docs]
+
+    sql = _get_sqlite()
+    if sql:
+        import json
+
+        out: list[dict[str, Any]] = []
+        rows = sql.execute("SELECT id, text, language, embedding FROM records").fetchall()
+        for rid, text, language, embedding_json in rows:
+            rec: dict[str, Any] = {"id": rid, "text": text, "language": language or "unknown"}
+            if embedding_json:
+                try:
+                    rec["embedding"] = json.loads(embedding_json)
+                except Exception:
+                    rec["embedding"] = None
+            out.append(rec)
+        return out
     return list(_memory_store.values())
 
 def _add_record_store(text: str, language: str, embedding: list[float]) -> str:
@@ -217,6 +377,18 @@ def _add_record_store(text: str, language: str, embedding: list[float]) -> str:
         doc_ref = db.collection(COLLECTION).document()
         doc_ref.set({"text": text, "language": language, "embedding": embedding})
         return doc_ref.id
+
+    sql = _get_sqlite()
+    if sql:
+        import json
+
+        rid = str(uuid.uuid4())
+        sql.execute(
+            "INSERT INTO records (id, text, language, embedding) VALUES (?, ?, ?, ?)",
+            (rid, text, language, json.dumps(embedding)),
+        )
+        sql.commit()
+        return rid
     rid = _next_id()
     _memory_store[rid] = {"id": rid, "text": text, "language": language, "embedding": embedding}
     return rid
@@ -236,7 +408,12 @@ def favicon():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME, "firebase": _get_db() is not None}
+    return {
+        "status": "ok",
+        "model": MODEL_NAME,
+        "firebase": _get_db() is not None,
+        "sqlite": _get_sqlite() is not None,
+    }
 
 
 @app.post("/compare", response_model=CompareResponse)
@@ -266,21 +443,19 @@ def search(req: SearchRequest):
         raise HTTPException(400, "Query must be non-empty")
     threshold = req.threshold if req.threshold is not None else DUPLICATE_THRESHOLD
     threshold = max(0.0, min(1.0, threshold))
-    query_emb = embed(req.query)
-    records = _all_records()
+    query_emb = np.asarray(embed(req.query), dtype=np.float32)
+    ids, texts, langs, mat = _get_embedding_index()
     results: list[SearchMatch] = []
-    for rec in records:
-        emb = rec.get("embedding")
-        if emb is None:
-            emb = embed(rec["text"]).tolist()
-        sim = cosine_similarity(query_emb, np.array(emb, dtype=np.float32))
-        if sim >= threshold:
-            results.append(SearchMatch(
-                id=rec["id"],
-                text=rec["text"],
-                similarity=round(sim * 100, 2),
-                language=rec.get("language", "unknown"),
-            ))
+    if mat is not None and mat.shape[0] > 0:
+        sims = (mat @ query_emb).astype(np.float32)
+        for i, sim in enumerate(sims.tolist()):
+            if sim >= threshold:
+                results.append(SearchMatch(
+                    id=ids[i],
+                    text=texts[i],
+                    similarity=round(sim * 100, 2),
+                    language=langs[i],
+                ))
     results.sort(key=lambda x: x.similarity, reverse=True)
     return SearchResponse(input=req.query, matches=results[:10])
 
@@ -290,25 +465,25 @@ def add_record(req: AddRecordRequest):
     if not req.text.strip():
         raise HTTPException(400, "text must be non-empty")
     lang = _detect_language(preprocess(req.text))
-    emb = embed(req.text)
-    # Check for duplicates first
-    records = _all_records()
+    threshold = req.threshold if req.threshold is not None else DUPLICATE_THRESHOLD
+    threshold = max(0.0, min(1.0, threshold))
+
+    emb = np.asarray(embed(req.text), dtype=np.float32)
+
+    # Check for duplicates (vectorized)
+    ids, texts, langs, mat = _get_embedding_index()
     top_match: Optional[SearchMatch] = None
-    max_sim = 0.0
-    for rec in records:
-        stored_emb = rec.get("embedding")
-        if stored_emb is None:
-            stored_emb = embed(rec["text"]).tolist()
-        sim = cosine_similarity(emb, np.array(stored_emb, dtype=np.float32))
-        if sim > max_sim:
-            max_sim = sim
-            if sim >= DUPLICATE_THRESHOLD:
-                top_match = SearchMatch(
-                    id=rec["id"],
-                    text=rec["text"],
-                    similarity=round(sim * 100, 2),
-                    language=rec.get("language", "unknown"),
-                )
+    if mat is not None and mat.shape[0] > 0:
+        sims = (mat @ emb).astype(np.float32)
+        j = int(np.argmax(sims))
+        max_sim = float(sims[j])
+        if max_sim >= threshold:
+            top_match = SearchMatch(
+                id=ids[j],
+                text=texts[j],
+                similarity=round(max_sim * 100, 2),
+                language=langs[j],
+            )
 
     if top_match:
         return AddRecordResponse(
@@ -321,7 +496,135 @@ def add_record(req: AddRecordRequest):
         )
 
     rid = _add_record_store(req.text, lang, emb.tolist())
+    _mark_index_dirty()
     return AddRecordResponse(id=rid, text=req.text, language=lang, inserted=True)
+
+
+@app.post("/add-records-bulk", response_model=BulkAddResponse)
+def add_records_bulk(req: BulkAddRequest):
+    texts_in = [t for t in req.texts if isinstance(t, str) and t.strip()]
+    threshold = req.threshold if req.threshold is not None else DUPLICATE_THRESHOLD
+    threshold = max(0.0, min(1.0, threshold))
+
+    if not texts_in:
+        return BulkAddResponse(total=0, added=0, duplicates=0, failed=0, results=[])
+
+    ids, base_texts, base_langs, base_mat = _get_embedding_index()
+    base = base_mat if base_mat is not None else np.zeros((0, _get_emb_dim()), dtype=np.float32)
+
+    embs = embed_many(texts_in)
+
+    results: list[AddRecordResponse] = []
+    added = duplicates = failed = 0
+
+    # Detect duplicates within the same upload without copying the full base matrix.
+    pending_mat = np.zeros((0, _get_emb_dim()), dtype=np.float32)
+    pending_ids: list[str] = []
+    pending_texts: list[str] = []
+    pending_langs: list[str] = []
+    pending_tail: list[np.ndarray] = []
+
+    def flush_tail():
+        nonlocal pending_mat, pending_tail
+        if not pending_tail:
+            return
+        tail = np.vstack(pending_tail).astype(np.float32)
+        pending_mat = np.vstack([pending_mat, tail]) if pending_mat.shape[0] else tail
+        pending_tail = []
+
+    for i, text in enumerate(texts_in):
+        try:
+            lang = _detect_language(preprocess(text))
+            emb = embs[i]
+
+            best_sim = -1.0
+            best_id = ""
+            best_text = ""
+            best_lang = "unknown"
+
+            if base.shape[0] > 0:
+                sims = (base @ emb).astype(np.float32)
+                j = int(np.argmax(sims))
+                best_sim = float(sims[j])
+                best_id = ids[j]
+                best_text = base_texts[j]
+                best_lang = base_langs[j]
+
+            if pending_mat.shape[0] > 0:
+                sims2 = (pending_mat @ emb).astype(np.float32)
+                j2 = int(np.argmax(sims2))
+                sim2 = float(sims2[j2])
+                if sim2 > best_sim:
+                    best_sim = sim2
+                    best_id = pending_ids[j2]
+                    best_text = pending_texts[j2]
+                    best_lang = pending_langs[j2]
+
+            if pending_tail:
+                for k, pe in enumerate(pending_tail):
+                    simt = float(np.dot(pe, emb))
+                    if simt > best_sim:
+                        best_sim = simt
+                        idx = len(pending_ids) - len(pending_tail) + k
+                        best_id = pending_ids[idx]
+                        best_text = pending_texts[idx]
+                        best_lang = pending_langs[idx]
+
+            if best_sim >= threshold and best_id:
+                duplicates += 1
+                top_match = SearchMatch(
+                    id=best_id,
+                    text=best_text,
+                    similarity=round(best_sim * 100, 2),
+                    language=best_lang,
+                )
+                results.append(
+                    AddRecordResponse(
+                        id="",
+                        text=text,
+                        language=lang,
+                        inserted=False,
+                        warning=f"Possible duplicate detected (similarity {top_match.similarity}%)",
+                        top_match=top_match,
+                    )
+                )
+                continue
+
+            rid = _add_record_store(text, lang, emb.tolist())
+            added += 1
+            results.append(AddRecordResponse(id=rid, text=text, language=lang, inserted=True))
+            pending_ids.append(rid)
+            pending_texts.append(text)
+            pending_langs.append(lang)
+
+            pending_tail.append(emb)
+            if len(pending_tail) >= 128:
+                flush_tail()
+
+        except Exception as exc:
+            failed += 1
+            results.append(
+                AddRecordResponse(
+                    id="",
+                    text=text,
+                    language="unknown",
+                    inserted=False,
+                    warning=f"Failed to add: {exc}",
+                    top_match=None,
+                )
+            )
+
+    flush_tail()
+    if added > 0:
+        _mark_index_dirty()
+
+    return BulkAddResponse(
+        total=len(texts_in),
+        added=added,
+        duplicates=duplicates,
+        failed=failed,
+        results=results,
+    )
 
 
 @app.get("/records", response_model=list[Record])
@@ -336,7 +639,13 @@ def delete_record(record_id: str):
     if db:
         db.collection(COLLECTION).document(record_id).delete()
     else:
-        _memory_store.pop(record_id, None)
+        sql = _get_sqlite()
+        if sql:
+            sql.execute("DELETE FROM records WHERE id = ?", (record_id,))
+            sql.commit()
+        else:
+            _memory_store.pop(record_id, None)
+    _mark_index_dirty()
     return {"deleted": record_id}
 
 

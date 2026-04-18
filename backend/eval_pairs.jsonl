@@ -1,0 +1,12 @@
+{"a":"Apple","b":"りんご","is_duplicate":true}
+{"a":"Login issue","b":"ログイン問題","is_duplicate":true}
+{"a":"Cannot log in","b":"ログインできない","is_duplicate":true}
+{"a":"Payment failed","b":"支払いに失敗しました","is_duplicate":true}
+{"a":"Red shirt","b":"赤いシャツ","is_duplicate":true}
+{"a":"Orange","b":"りんご","is_duplicate":false}
+{"a":"Cancel subscription","b":"サブスクリプションをキャンセル","is_duplicate":true}
+{"a":"Refund requested","b":"返金を依頼しました","is_duplicate":true}
+{"a":"Shipping delay","b":"تأخير الشحن","is_duplicate":true}
+{"a":"Shipping delay","b":"Invoice number","is_duplicate":false}
+{"a":"Reset password","b":"รีเซ็ตรหัสผ่าน","is_duplicate":true}
+{"a":"Reset password","b":"Change email","is_duplicate":false}

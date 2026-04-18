@@ -12,7 +12,18 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+
+    // Project-specific ignores:
+    ".venv/**",
+    "backend/**",
   ]),
+
+  // Allow normal data-fetching effects without failing lint.
+  {
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -1,7 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { searchSimilar, addRecord, listRecords, deleteRecord } from "@/lib/api";
+import { searchSimilar, addRecord, addRecordsBulkServerChunked, listRecords, deleteRecord } from "@/lib/api";
 import type { SearchMatch, Record as DDRecord } from "@/lib/types";
+import { defaultThresholdPercent, defaultBulkChunkSize } from "@/lib/config";
+import Papa from "papaparse";
 
 function SimilarityBar({ value }: { value: number }) {
   const color =
@@ -39,14 +41,18 @@ function LanguageFlag({ lang }: { lang: string }) {
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [threshold, setThreshold] = useState(70);
+  const [threshold, setThreshold] = useState(defaultThresholdPercent());
   const [matches, setMatches] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
   const [records, setRecords] = useState<DDRecord[]>([]);
   const [addText, setAddText] = useState("");
   const [addMsg, setAddMsg] = useState<{ type: "success" | "warn" | "error"; text: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [csvMsg, setCsvMsg] = useState<{ type: "success" | "warn" | "error"; text: string } | null>(null);
+  const [csvProgress, setCsvProgress] = useState<{ done: number; total: number; added: number; duplicates: number; failed: number } | null>(null);
+  const [csvUploading, setCsvUploading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchRecords = useCallback(async () => {
     try { setRecords(await listRecords()); } catch { /* ignore */ }
@@ -73,7 +79,7 @@ export default function SearchPage() {
     setAdding(true);
     setAddMsg(null);
     try {
-      const r = await addRecord(addText);
+      const r = await addRecord(addText, threshold / 100);
       if (r.inserted) {
         setAddMsg({ type: "success", text: `✓ Record added (id: ${r.id}, lang: ${r.language})` });
         setAddText("");
@@ -94,6 +100,118 @@ export default function SearchPage() {
   const handleDelete = async (id: string) => {
     await deleteRecord(id);
     fetchRecords();
+  };
+
+  const extractCsvTexts = async (file: File): Promise<string[]> => {
+    const parseWithHeader = () =>
+      new Promise<Papa.ParseResult<Record<string, unknown>>>((resolve, reject) => {
+        Papa.parse<Record<string, unknown>>(file, {
+          header: true,
+          skipEmptyLines: "greedy",
+          dynamicTyping: false,
+          complete: resolve,
+          error: reject,
+        });
+      });
+
+    const parseWithoutHeader = () =>
+      new Promise<Papa.ParseResult<unknown[]>>((resolve, reject) => {
+        Papa.parse<unknown[]>(file, {
+          header: false,
+          skipEmptyLines: "greedy",
+          dynamicTyping: false,
+          complete: resolve,
+          error: reject,
+        });
+      });
+
+    const parseResult = await parseWithHeader();
+
+    const allErrors = (parseResult as Papa.ParseResult<unknown>).errors ?? [];
+    // PapaParse sometimes reports a non-fatal delimiter warning for one-column CSVs.
+    const fatalErrors = allErrors.filter((e) => e.type !== "Delimiter");
+    if (fatalErrors.length > 0) {
+      // Prefer first error to keep UX simple
+      throw new Error(fatalErrors[0]?.message ?? "CSV parse error");
+    }
+
+    const metaFields = parseResult.meta?.fields ?? [];
+    const data = parseResult.data ?? [];
+    if (!Array.isArray(data) || data.length === 0) return [];
+
+    const fieldLower = metaFields.map((f) => f.toLowerCase());
+    const textFieldIndex = fieldLower.findIndex((f) => f === "text" || f === "record" || f === "message" || f === "title");
+    const recognizedHeader = textFieldIndex >= 0;
+
+    // If the “header” looks like actual record text (common in 1-column CSVs with no header), reparse.
+    const headerLooksLikeData =
+      metaFields.length === 1 &&
+      !recognizedHeader &&
+      (metaFields[0].length > 30 || /\s|[.!?。！？]/.test(metaFields[0]));
+
+    if (headerLooksLikeData) {
+      const noHeader = await parseWithoutHeader();
+      const rows = noHeader.data ?? [];
+      const texts = rows
+        .map((row) => (Array.isArray(row) ? (row[0] ?? "") : "").toString().trim())
+        .filter(Boolean);
+      const unique: string[] = [];
+      const seen = new Set<string>();
+      for (const t of texts) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        unique.push(t);
+      }
+      return unique;
+    }
+
+    const chosenField = recognizedHeader ? metaFields[textFieldIndex] : metaFields[0];
+
+    const texts = data
+      .map((row) => {
+        const v = (row as Record<string, unknown>)[chosenField];
+        return (v ?? "").toString().trim();
+      })
+      .filter(Boolean);
+
+    // De-dupe within upload to avoid wasting API calls
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const t of texts) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      unique.push(t);
+    }
+    return unique;
+  };
+
+  const handleCsvUpload = async (file: File) => {
+    setCsvMsg(null);
+    setCsvProgress(null);
+    setCsvUploading(true);
+    try {
+      const texts = await extractCsvTexts(file);
+      if (texts.length === 0) {
+        setCsvMsg({ type: "warn", text: "No usable rows found. Include a 'text' column (recommended) or put the record text in the first column." });
+        return;
+      }
+
+      setCsvProgress({ done: 0, total: texts.length, added: 0, duplicates: 0, failed: 0 });
+      const result = await addRecordsBulkServerChunked(texts, {
+        chunkSize: defaultBulkChunkSize(),
+        threshold: threshold / 100,
+        onProgress: (p) => setCsvProgress(p),
+      });
+
+      const summary = `Added ${result.added}/${result.total}. Duplicates: ${result.duplicates}. Failed: ${result.failed}.`;
+      setCsvMsg(result.failed > 0 ? { type: "warn", text: summary } : { type: "success", text: summary });
+      fetchRecords();
+    } catch (e: unknown) {
+      setCsvMsg({ type: "error", text: e instanceof Error ? e.message : "CSV upload failed" });
+    } finally {
+      setCsvUploading(false);
+      if (csvInputRef.current) csvInputRef.current.value = "";
+    }
   };
 
   const msgColors = { success: "var(--success)", warn: "var(--warn)", error: "var(--danger)" };
@@ -256,6 +374,76 @@ export default function SearchPage() {
                 }}
               >
                 {addMsg.text}
+              </div>
+            )}
+
+            <div className="divider" style={{ margin: "18px 0" }} />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <p className="section-label" style={{ marginBottom: 4 }}>CSV Upload</p>
+                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                  Upload a CSV with a <span className="mono">text</span> column (or use the first column).
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleCsvUpload(f);
+                  }}
+                  style={{ display: "none" }}
+                />
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => csvInputRef.current?.click()}
+                  disabled={csvUploading}
+                >
+                  {csvUploading ? "Uploading…" : "⇪ Upload CSV"}
+                </button>
+              </div>
+            </div>
+
+            {csvProgress && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 6 }}>
+                  <span>Progress</span>
+                  <span style={{ color: "var(--accent)", fontWeight: 700 }}>{csvProgress.done}/{csvProgress.total}</span>
+                </div>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${csvProgress.total > 0 ? Math.round((csvProgress.done / csvProgress.total) * 100) : 0}%`,
+                      background: "var(--accent)",
+                    }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  <span>Added: <span style={{ color: "var(--success)", fontWeight: 700 }}>{csvProgress.added}</span></span>
+                  <span>Duplicates: <span style={{ color: "var(--warn)", fontWeight: 700 }}>{csvProgress.duplicates}</span></span>
+                  <span>Failed: <span style={{ color: "var(--danger)", fontWeight: 700 }}>{csvProgress.failed}</span></span>
+                </div>
+              </div>
+            )}
+
+            {csvMsg && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  background: `${msgColors[csvMsg.type]}18`,
+                  border: `1px solid ${msgColors[csvMsg.type]}33`,
+                  color: msgColors[csvMsg.type],
+                  fontSize: "0.85rem",
+                }}
+              >
+                {csvMsg.text}
               </div>
             )}
           </div>

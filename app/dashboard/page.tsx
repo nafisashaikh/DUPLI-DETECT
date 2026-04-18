@@ -55,6 +55,7 @@ export default function DashboardPage() {
   const animFrameRef = useRef<number>(0);
   const [records, setRecords] = useState<DDRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(65);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
@@ -66,6 +67,7 @@ export default function DashboardPage() {
   const buildGraph = useCallback(async (recs: DDRecord[], thresh: number) => {
     if (recs.length === 0) { setGraphNodes([]); setGraphEdges([]); return; }
     setLoading(true);
+    setError(null);
     try {
       // For each record, get its similar matches
       const edgesRaw: { a: number; b: number; w: number }[] = [];
@@ -111,6 +113,12 @@ export default function DashboardPage() {
       setGraphEdges(edges);
       nodesRef.current = nodes;
       setStats({ nodes: nodes.length, edges: edges.length, groups: uniqueGroups });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to build graph");
+      setGraphNodes([]);
+      setGraphEdges([]);
+      nodesRef.current = [];
+      setStats({ nodes: recs.length, edges: 0, groups: 0 });
     } finally {
       setLoading(false);
     }
@@ -122,6 +130,14 @@ export default function DashboardPage() {
       const recs = await listRecords();
       setRecords(recs);
       await buildGraph(recs, threshold);
+      setError(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load records");
+      setRecords([]);
+      setGraphNodes([]);
+      setGraphEdges([]);
+      nodesRef.current = [];
+      setStats({ nodes: 0, edges: 0, groups: 0 });
     } finally {
       setLoading(false);
     }
@@ -301,7 +317,23 @@ export default function DashboardPage() {
           height: 520,
         }}
       >
-        {records.length === 0 && !loading && (
+        {error && !loading && (
+          <div
+            style={{
+              position: "absolute", inset: 0,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              color: "var(--text-secondary)", gap: 10, padding: 24, textAlign: "center",
+            }}
+          >
+            <span style={{ fontSize: 40, color: "var(--danger)" }}>⚠</span>
+            <p style={{ fontWeight: 700, color: "var(--danger)" }}>Backend unreachable</p>
+            <p style={{ maxWidth: 680 }}>{error}</p>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: 720 }}>
+              Start the FastAPI server on port 8000, then refresh this page.
+            </p>
+          </div>
+        )}
+        {records.length === 0 && !loading && !error && (
           <div
             style={{
               position: "absolute", inset: 0,

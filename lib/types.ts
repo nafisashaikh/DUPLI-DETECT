@@ -36,3 +36,11 @@ export interface Record {
   text: string;
   language: string;
 }
+
+export interface BulkAddResponse {
+  total: number;
+  added: number;
+  duplicates: number;
+  failed: number;
+  results: AddRecordResponse[];
+}
