@@ -43,10 +43,31 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function compareTexts(text1: string, text2: string): Promise<CompareResult> {
+export function compareTexts(
+  text1: string,
+  text2: string,
+  options?: {
+    threshold?: number;
+    semanticWeight?: number;
+    phoneticWeight?: number;
+    conceptWeight?: number;
+  }
+): Promise<CompareResult> {
+  const payload: Record<string, unknown> = { text1, text2 };
+  if (options?.threshold !== undefined) {
+    payload.threshold = options.threshold;
+  }
+  const weights: Record<string, number> = {};
+  if (options?.semanticWeight !== undefined) weights.semantic = options.semanticWeight;
+  if (options?.phoneticWeight !== undefined) weights.phonetic = options.phoneticWeight;
+  if (options?.conceptWeight !== undefined) weights.concept = options.conceptWeight;
+  if (Object.keys(weights).length > 0) {
+    payload.weights = weights;
+  }
+
   return api<CompareResult>("/compare", {
     method: "POST",
-    body: JSON.stringify({ text1, text2 }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -204,3 +225,36 @@ export async function processPDF(
     },
   });
 }
+
+export function getDemoData(): Promise<{ count: number; texts: string[]; description: string }> {
+  return api("/demo-data");
+}
+
+export function loadDemoData(): Promise<BulkAddResponse> {
+  return api<BulkAddResponse>("/load-demo-data", { method: "POST" });
+}
+
+export function clearAllRecords(): Promise<{ deleted: string; status: string }> {
+  return api<{ deleted: string; status: string }>("/records", { method: "DELETE" });
+}
+
+export function getReport(): Promise<{
+  title: string;
+  timestamp: string;
+  total_records: number;
+  unique_languages: string[];
+  duplicate_groups_detected: number;
+  content: string;
+}> {
+  return api("/report");
+}
+
+export async function downloadReport(): Promise<string> {
+  const res = await fetch(`${BASE}/report/download`);
+  if (!res.ok) {
+    throw new Error(`API /report/download: ${res.status} — ${await res.text()}`);
+  }
+  return res.text();
+}
+
+

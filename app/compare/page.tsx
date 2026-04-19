@@ -1,7 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import BrainScores from "@/components/BrainScores";
 import { compareTexts } from "@/lib/api";
 import type { CompareResult } from "@/lib/types";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const EXAMPLES = [
   { t1: "Login issue", t2: "ログインの問題", label: "EN → JP" },
@@ -15,6 +18,8 @@ const TYPE_META: Record<string, { label: string; color: string; icon: string }> 
   typo:                { label: "Typo",              color: "var(--warn)",    icon: "✏️" },
   language_difference: { label: "Language Diff",     color: "var(--accent-3)", icon: "🌐" },
   semantic:            { label: "Semantic Match",     color: "var(--accent-2)", icon: "💡" },
+  phonetic:            { label: "Phonetic Match",     color: "#22d3ee", icon: "🔊" },
+  concept:             { label: "Concept Match",      color: "#a855f7", icon: "🧠" },
   not_duplicate:       { label: "Not a Duplicate",   color: "var(--text-muted)", icon: "✗" },
 };
 
@@ -63,22 +68,71 @@ function LangBadge({ lang }: { lang: string }) {
 export default function ComparePage() {
   const [text1, setText1] = useState("");
   const [text2, setText2] = useState("");
-  const [result, setResult] = useState<CompareResult | null>(null);
+  const [weights, setWeights] = useState({ semantic: 0.4, phonetic: 0.3, concept: 0.3 });
+  const [threshold, setThreshold] = useState(0.75);
+  const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [explanation, setExplanation] = useState("");
 
-  const handleCompare = async () => {
-    setError("");
-    setResult(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const performComparison = async (t1: string, t2: string, w: any, th: number) => {
+    if (!t1.trim() || !t2.trim()) {
+      setResult(null);
+      setExplanation("");
+      return;
+    }
+
     setLoading(true);
     try {
-      const r = await compareTexts(text1, text2);
-      setResult(r);
+      const response = await fetch(`${API_URL}/compare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text1: t1, text2: t2, weights: w, threshold: th }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(err || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      setResult(data);
+      setExplanation(data.explanation || "");
+      setError("");
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Comparison failed");
+      const msg = e instanceof Error ? e.message : "Comparison failed";
+      console.error(msg);
+      setError(msg);
+      setExplanation(`Error: ${msg}`);
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      performComparison(text1, text2, weights, threshold);
+    }, 500);
+
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [weights, threshold]);
+
+  const handleCompare = async () => {
+    setError("");
+    await performComparison(text1, text2, weights, threshold);
+  };
+
+  const handleWeightsChange = (newWeights: any) => {
+    setWeights(newWeights);
+  };
+
+  const handleThresholdChange = (newThreshold: number) => {
+    setThreshold(newThreshold);
   };
 
   const loadExample = (ex: { t1: string; t2: string }) => {
@@ -86,8 +140,6 @@ export default function ComparePage() {
     setText2(ex.t2);
     setResult(null);
   };
-
-  const typeMeta = result ? (TYPE_META[result.duplicate_type] ?? TYPE_META.not_duplicate) : null;
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "40px 24px 80px" }}>
@@ -176,99 +228,134 @@ export default function ComparePage() {
         )}
       </div>
 
-      {/* Results */}
+      {/* BrainScores section */}
       {result && (
-        <div className="card animate-fade-up" style={{ padding: 36 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "auto 1fr",
-              gap: 40,
-              alignItems: "center",
-            }}
+        <div className="animate-fade-up">
+          <BrainScores
+            semanticScore={result.semantic_score}
+            phoneticScore={result.phonetic_score}
+            conceptScore={result.concept_score}
+            finalScore={result.final_score}
+            explanation={explanation}
+            weights={weights}
+            onWeightsChange={handleWeightsChange}
+            threshold={threshold}
+            onThresholdChange={handleThresholdChange}
+          />
+        </div>
+      )}
+
+      <style>{`
+        @media (max-width: 600px) {
+          .card > div { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
+  return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <div className="animate-fade-up">
+        <p className="section-label" style={{ marginBottom: 8 }}>Feature 1 + 2 + 3</p>
+        <h1 style={{ fontSize: "clamp(1.6rem,4vw,2.4rem)", marginBottom: 8 }}>
+          Compare Records
+        </h1>
+        <p style={{ color: "var(--text-secondary)", marginBottom: 32 }}>
+          Paste two texts in any language and get similarity score + duplicate type classification.
+        </p>
+      </div>
+
+      {/* Example chips */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 28 }}>
+        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", alignSelf: "center" }}>Examples:</span>
+        {EXAMPLES.map((ex) => (
+          <button
+            key={ex.label}
+            className="btn btn-ghost"
+            style={{ padding: "5px 14px", fontSize: "0.775rem" }}
+            onClick={() => loadExample(ex)}
           >
-            {/* Gauge */}
-            <SimilarityGauge value={result.similarity_score} />
+            {ex.label}
+          </button>
+        ))}
+      </div>
 
-            {/* Details */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Duplicate verdict */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <span
-                  style={{
-                    fontSize: "1.5rem",
-                    fontWeight: 800,
-                    color: result.is_duplicate ? "var(--success)" : "var(--danger)",
-                  }}
-                >
-                  {result.is_duplicate ? "✓ Duplicates" : "✗ Different"}
-                </span>
-                {typeMeta && (
-                  <span
-                    className="badge"
-                    style={{
-                      background: `${typeMeta.color}22`,
-                      color: typeMeta.color,
-                      border: `1px solid ${typeMeta.color}44`,
-                    }}
-                  >
-                    {typeMeta.icon} {typeMeta.label}
-                  </span>
-                )}
-              </div>
+      {/* Input area */}
+      <div
+        className="card"
+        style={{
+          padding: 28,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 20,
+          marginBottom: 20,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)" }}>Record A</label>
+          <textarea
+            id="text1-input"
+            className="input"
+            rows={5}
+            placeholder="e.g. Login issue…"
+            value={text1}
+            onChange={(e) => setText1(e.target.value)}
+          />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)" }}>Record B</label>
+          <textarea
+            id="text2-input"
+            className="input"
+            rows={5}
+            placeholder="e.g. ログインの問題…"
+            value={text2}
+            onChange={(e) => setText2(e.target.value)}
+          />
+        </div>
 
-              {/* Progress bar */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 6 }}>
-                  <span>Similarity Score</span>
-                  <span>{result.similarity_score}%</span>
-                </div>
-                <div className="progress-bar">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${result.similarity_score}%`,
-                      background:
-                        result.similarity_score >= 70
-                          ? "linear-gradient(90deg,var(--success),#34d399)"
-                          : result.similarity_score >= 40
-                          ? "linear-gradient(90deg,var(--warn),#fbbf24)"
-                          : "linear-gradient(90deg,var(--danger),#fb7185)",
-                    }}
-                  />
-                </div>
-              </div>
+        <div style={{ gridColumn: "1/-1", display: "flex", justifyContent: "center" }}>
+          <button
+            id="compare-btn"
+            className="btn btn-primary"
+            style={{ minWidth: 200 }}
+            onClick={handleCompare}
+            disabled={loading || !text1.trim() || !text2.trim()}
+          >
+            {loading ? (
+              <>
+                <span className="animate-spin" style={{ display: "inline-block" }}>⟳</span>
+                Analysing…
+              </>
+            ) : (
+              "⚡ Compare"
+            )}
+          </button>
+        </div>
 
-              {/* Languages */}
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Languages:</span>
-                <LangBadge lang={result.lang1} />
-                <span style={{ color: "var(--text-muted)" }}>→</span>
-                <LangBadge lang={result.lang2} />
-              </div>
-
-              {/* JSON preview */}
-              <details style={{ fontSize: "0.8rem" }}>
-                <summary style={{ cursor: "pointer", color: "var(--text-muted)", marginBottom: 8 }}>
-                  Raw JSON response
-                </summary>
-                <pre
-                  className="mono"
-                  style={{
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    padding: 14,
-                    overflowX: "auto",
-                    color: "var(--accent-3)",
-                    fontSize: "0.78rem",
-                  }}
-                >
-                  {JSON.stringify(result, null, 2)}
-                </pre>
-              </details>
-            </div>
+        {error && (
+          <div style={{ gridColumn: "1/-1", color: "var(--danger)", fontSize: "0.875rem", textAlign: "center" }}>
+            ⚠ {error}
           </div>
+        )}
+      </div>
+
+      {/* BrainScores section */}
+      {result && (
+        <div className="animate-fade-up">
+          <BrainScores
+            semanticScore={result.semantic_score}
+            phoneticScore={result.phonetic_score}
+            conceptScore={result.concept_score}
+            finalScore={result.final_score}
+            explanation={explanation}
+            weights={weights}
+            onWeightsChange={handleWeightsChange}
+            threshold={threshold}
+            onThresholdChange={handleThresholdChange}
+          />
         </div>
       )}
 

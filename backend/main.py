@@ -11,7 +11,11 @@ import unicodedata
 import uuid
 import io
 import csv
+from contextlib import asynccontextmanager
 from typing import Any, Optional
+
+from concept import ConceptMatcher, get_concept_score as concept_similarity
+from phonetic import phonetic_similarity
 
 import numpy as np
 import uvicorn
@@ -33,6 +37,13 @@ except ImportError as e:
     Image = None
     io = None
     base64 = None
+
+# Clustering imports
+try:
+    from sklearn.cluster import DBSCAN
+except ImportError:
+    print("Warning: scikit-learn not available for clustering")
+    DBSCAN = None
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded heavy dependencies
@@ -88,6 +99,16 @@ def _env_bool(name: str, default: bool) -> bool:
 
 DUPLICATE_THRESHOLD = max(0.0, min(1.0, _env_float("DUPLICATE_THRESHOLD", 0.70)))
 MODEL_NAME = _env_str("MODEL_NAME", "paraphrase-multilingual-MiniLM-L12-v2")
+SEMANTIC_WEIGHT = _env_float("SEMANTIC_WEIGHT", 0.60)
+PHONETIC_WEIGHT = _env_float("PHONETIC_WEIGHT", 0.20)
+CONCEPT_WEIGHT = _env_float("CONCEPT_WEIGHT", 0.20)
+COMPARE_THRESHOLD = _env_float("COMPARE_THRESHOLD", DUPLICATE_THRESHOLD)
+TYPO_RATIO_THRESHOLD = max(0.0, min(1.0, _env_float("TYPO_RATIO_THRESHOLD", 0.92)))
+LANGUAGE_DIFFERENCE_THRESHOLD = max(0.0, min(1.0, _env_float("LANGUAGE_DIFFERENCE_THRESHOLD", 0.70)))
+DEFAULT_W_SEM = float(os.getenv("W_SEM", "0.4"))
+DEFAULT_W_PHO = float(os.getenv("W_PHO", "0.3"))
+DEFAULT_W_CON = float(os.getenv("W_CON", "0.3"))
+DEFAULT_THRESHOLD = float(os.getenv("THRESHOLD", "0.75"))
 
 # NVIDIA API configuration
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
@@ -311,24 +332,109 @@ def _levenshtein_ratio(a: str, b: str) -> float:
                 prev_diag = old_above
         return 1 - dp[lb] / max(la, lb)
 
-def classify_duplicate_type(text1: str, text2: str, sim_score: float) -> str:
+def _normalize_weights(semantic: float, phonetic: float, concept: float) -> dict[str, float]:
+    semantic = max(0.0, semantic)
+    phonetic = max(0.0, phonetic)
+    concept = max(0.0, concept)
+    total = semantic + phonetic + concept
+    if total <= 0:
+        return {"semantic": 0.60, "phonetic": 0.20, "concept": 0.20}
+    return {
+        "semantic": semantic / total,
+        "phonetic": phonetic / total,
+        "concept": concept / total,
+    }
+
+
+def classify_duplicate_type(
+    text1: str,
+    text2: str,
+    semantic_score: float,
+    phonetic_score: float,
+    concept_score: float,
+    combined_score: float,
+    threshold: float,
+) -> str:
     p1, p2 = preprocess(text1), preprocess(text2)
     lang1, lang2 = _detect_language(p1), _detect_language(p2)
     lev = _levenshtein_ratio(p1, p2)
 
-    if lev >= 0.92 and (lang1 == lang2 or "unknown" in (lang1, lang2)):
+    if lev >= TYPO_RATIO_THRESHOLD and (lang1 == lang2 or "unknown" in (lang1, lang2)):
         return "typo"
-    if sim_score >= DUPLICATE_THRESHOLD and lang1 != lang2 and lang1 != "unknown" and lang2 != "unknown":
+    if semantic_score >= LANGUAGE_DIFFERENCE_THRESHOLD and lang1 != lang2 and lang1 != "unknown" and lang2 != "unknown":
         return "language_difference"
-    if sim_score >= DUPLICATE_THRESHOLD:
-        return "semantic"
-    return "not_duplicate"
+
+    if combined_score < threshold:
+        return "not_duplicate"
+
+    best_type = max(
+        [
+            ("semantic", semantic_score),
+            ("phonetic", phonetic_score),
+            ("concept", concept_score),
+        ],
+        key=lambda item: item[1],
+    )
+    return best_type[0]
+
+def compute_three_brain_distance(text1: str, text2: str, weights: dict[str, float]) -> float:
+    """
+    Compute distance between two texts using three-brain system.
+    Distance = 1 - weighted_similarity
+    Weights are expected to be normalized (sum to 1.0).
+    """
+    try:
+        semantic_score = float(cosine_similarity(embed(text1), embed(text2)))
+        phonetic_score = phonetic_similarity(text1, text2)
+        concept_score = app.state.concept_matcher.get_concept_score(text1, text2)
+        
+        # Normalize scores to [0, 1]
+        semantic_score = max(0.0, min(1.0, semantic_score))
+        phonetic_score = max(0.0, min(1.0, phonetic_score))
+        concept_score = max(0.0, min(1.0, concept_score))
+        
+        # Weighted average similarity
+        weighted_similarity = (
+            semantic_score * weights.get("semantic", 1/3) +
+            phonetic_score * weights.get("phonetic", 1/3) +
+            concept_score * weights.get("concept", 1/3)
+        )
+        
+        # Convert to distance (0 = identical, 1 = completely different)
+        return 1.0 - weighted_similarity
+    except Exception:
+        return 1.0  # Maximum distance on error
+
+def compute_distance_matrix(texts: list[str], weights: dict[str, float]) -> np.ndarray:
+    """
+    Compute pairwise distance matrix for clustering using three-brain system.
+    Returns: NxN distance matrix (N = len(texts))
+    """
+    n = len(texts)
+    distance_matrix = np.zeros((n, n), dtype=np.float32)
+    
+    for i in range(n):
+        for j in range(i + 1, n):
+            dist = compute_three_brain_distance(texts[i], texts[j], weights)
+            distance_matrix[i][j] = dist
+            distance_matrix[j][i] = dist  # Symmetric
+    
+    return distance_matrix
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load Brain 1 model and instantiate Brain 3 concept matcher once at startup.
+    _get_model()
+    app.state.concept_matcher = ConceptMatcher()
+    print("DupliDetect backend ready: model and ConceptMatcher loaded")
+    yield
+
 app = FastAPI(
     title="DupliDetect API",
+    lifespan=lifespan,
     description=(
         "Multilingual duplicate detection using sentence-transformers.\n\n"
         "**Core idea**: preprocess → embed → cosine similarity → classify duplicate type.\n\n"
@@ -360,6 +466,16 @@ app.add_middleware(
 class CompareRequest(BaseModel):
     text1: str = Field(..., description="First input text.", examples=["Login issue"])
     text2: str = Field(..., description="Second input text.", examples=["ログインの問題"])
+    weights: Optional[dict] = Field(
+        default=None,
+        description="Optional weights for semantic, phonetic, and concept scores.",
+        examples=[{"semantic": 0.4, "phonetic": 0.3, "concept": 0.3}],
+    )
+    threshold: Optional[float] = Field(
+        default=None,
+        description="Optional final duplicate threshold (0..1).",
+        examples=[0.75],
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -373,7 +489,13 @@ class CompareRequest(BaseModel):
 class CompareResponse(BaseModel):
     text1: str
     text2: str
-    similarity_score: float          # 0-100
+    semantic_score: float
+    phonetic_score: float
+    concept_score: float
+    combined_score: float
+    similarity_score: float          # combined score 0-100 for backwards compatibility
+    threshold: float
+    weights: dict[str, float]
     is_duplicate: bool
     duplicate_type: str
     lang1: str
@@ -385,7 +507,13 @@ class CompareResponse(BaseModel):
                 {
                     "text1": "Login issue",
                     "text2": "ログインの問題",
-                    "similarity_score": 93.91,
+                    "semantic_score": 94.0,
+                    "phonetic_score": 68.0,
+                    "concept_score": 82.0,
+                    "combined_score": 86.0,
+                    "similarity_score": 86.0,
+                    "threshold": 70.0,
+                    "weights": {"semantic": 0.6, "phonetic": 0.2, "concept": 0.2},
                     "is_duplicate": True,
                     "duplicate_type": "language_difference",
                     "lang1": "en",
@@ -595,6 +723,87 @@ class PDFProcessResponse(BaseModel):
         }
     }
 
+class ClusterItem(BaseModel):
+    id: str
+    text: str
+    language: str
+    group_id: int
+    distance_to_centroid: float
+
+class ClusterGroup(BaseModel):
+    group_id: int
+    size: int
+    confidence: float
+    languages: list[str]
+    items: list[ClusterItem]
+    dominant_match_reason: str
+
+class ClusterRequest(BaseModel):
+    texts: list[str] = Field(..., description="List of texts to cluster", examples=[["text1", "text2", "text3"]])
+    eps: Optional[float] = Field(
+        default=0.25,
+        description="DBSCAN epsilon parameter (0..1). Higher = larger clusters.",
+        examples=[0.25],
+    )
+    min_samples: Optional[int] = Field(
+        default=1,
+        description="DBSCAN min_samples parameter. Minimum points to form a cluster.",
+        examples=[1],
+    )
+    weights: Optional[dict] = Field(
+        default=None,
+        description="Optional weights for semantic, phonetic, and concept scores.",
+        examples=[{"semantic": 0.4, "phonetic": 0.3, "concept": 0.3}],
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "texts": ["Login issue", "ログインの問題", "Cannot log in", "Payment failed"],
+                    "eps": 0.25,
+                    "min_samples": 1,
+                    "weights": {"semantic": 0.4, "phonetic": 0.3, "concept": 0.3}
+                }
+            ]
+        }
+    }
+
+class ClusterResponse(BaseModel):
+    total_texts: int
+    num_clusters: int
+    num_noise_points: int
+    groups: list[ClusterGroup]
+    eps: float
+    weights: dict[str, float]
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "total_texts": 4,
+                    "num_clusters": 2,
+                    "num_noise_points": 0,
+                    "eps": 0.25,
+                    "weights": {"semantic": 0.4, "phonetic": 0.3, "concept": 0.3},
+                    "groups": [
+                        {
+                            "group_id": 0,
+                            "size": 3,
+                            "confidence": 0.92,
+                            "languages": ["en", "ja"],
+                            "items": [
+                                {"id": "0", "text": "Login issue", "language": "en", "group_id": 0, "distance_to_centroid": 0.12},
+                                {"id": "1", "text": "ログインの問題", "language": "ja", "group_id": 0, "distance_to_centroid": 0.18}
+                            ],
+                            "dominant_match_reason": "High semantic similarity"
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
 # ---------------------------------------------------------------------------
 # In-memory fallback store when Firebase is unavailable
 # ---------------------------------------------------------------------------
@@ -741,29 +950,236 @@ def health():
 
 @app.post(
     "/compare",
-    response_model=CompareResponse,
+    response_model=dict,
     tags=["Core"],
     summary="Compare two texts",
-    description="Returns cosine similarity (0–100), duplicate verdict, duplicate type, and detected languages.",
+    description=(
+        "Returns multi-brain scores and a final duplicate verdict. "
+        "Weights and threshold can be configured via environment variables or request payload."
+    ),
 )
 def compare(req: CompareRequest):
-    if not req.text1.strip() or not req.text2.strip():
-        raise HTTPException(400, "Both text1 and text2 must be non-empty")
-    emb1 = embed(req.text1)
-    emb2 = embed(req.text2)
-    sim = cosine_similarity(emb1, emb2)
-    sim_pct = round(sim * 100, 2)
-    dup_type = classify_duplicate_type(req.text1, req.text2, sim)
-    is_dup = dup_type != "not_duplicate"
-    return CompareResponse(
-        text1=req.text1,
-        text2=req.text2,
-        similarity_score=sim_pct,
-        is_duplicate=is_dup,
-        duplicate_type=dup_type,
-        lang1=_detect_language(preprocess(req.text1)),
-        lang2=_detect_language(preprocess(req.text2)),
-    )
+    try:
+        if not req.text1.strip() or not req.text2.strip():
+            raise HTTPException(400, "Both text1 and text2 must be non-empty")
+
+        raw_weights = req.weights or {}
+        w_sem = float(raw_weights.get("semantic", DEFAULT_W_SEM))
+        w_pho = float(raw_weights.get("phonetic", DEFAULT_W_PHO))
+        w_con = float(raw_weights.get("concept", DEFAULT_W_CON))
+
+        weights = {
+            "semantic": max(0.0, w_sem),
+            "phonetic": max(0.0, w_pho),
+            "concept": max(0.0, w_con),
+        }
+
+        if any(value == 0.0 for value in weights.values()):
+            nonzero = {k: v for k, v in weights.items() if v > 0.0}
+            if nonzero:
+                total = sum(nonzero.values())
+                weights = {
+                    key: (value / total if value > 0 else 0.0)
+                    for key, value in weights.items()
+                }
+            else:
+                weights = {"semantic": 1 / 3, "phonetic": 1 / 3, "concept": 1 / 3}
+        else:
+            total = sum(weights.values())
+            if total <= 0:
+                weights = {"semantic": 1 / 3, "phonetic": 1 / 3, "concept": 1 / 3}
+            else:
+                weights = {k: v / total for k, v in weights.items()}
+
+        threshold = req.threshold if req.threshold is not None else DEFAULT_THRESHOLD
+        threshold = max(0.0, min(1.0, float(threshold)))
+
+        semantic_score = float(cosine_similarity(embed(req.text1), embed(req.text2)))
+        phonetic_score = phonetic_similarity(req.text1, req.text2)
+        concept_score = app.state.concept_matcher.get_concept_score(req.text1, req.text2)
+
+        final_score = (
+            semantic_score * weights["semantic"]
+            + phonetic_score * weights["phonetic"]
+            + concept_score * weights["concept"]
+        )
+
+        is_duplicate = final_score >= threshold
+
+        explanation_parts: list[str] = []
+        if concept_score == 1.0:
+            explanation_parts.append("Same concept detected")
+        if phonetic_score > 0.8:
+            explanation_parts.append("High phonetic similarity")
+        if semantic_score > 0.8:
+            explanation_parts.append("High semantic similarity")
+        if final_score < threshold:
+            explanation_parts.append("Combined score below threshold")
+        explanation = " and ".join(explanation_parts) or "Comparison completed"
+
+        return {
+            "is_duplicate": is_duplicate,
+            "semantic_score": round(semantic_score, 4),
+            "phonetic_score": round(phonetic_score, 4),
+            "concept_score": concept_score,
+            "final_score": round(final_score, 4),
+            "explanation": explanation,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(
+    "/cluster",
+    response_model=ClusterResponse,
+    tags=["Core"],
+    summary="Cluster texts using multi-brain distance",
+    description=(
+        "Cluster texts using DBSCAN with three-brain pairwise distance matrix. "
+        "Returns cluster groups with confidence and match reasons."
+    ),
+)
+def cluster(req: ClusterRequest):
+    try:
+        if not req.texts or len(req.texts) < 2:
+            raise HTTPException(400, "At least 2 texts required for clustering")
+        
+        # Validate and prepare texts
+        texts = [t.strip() for t in req.texts if isinstance(t, str) and t.strip()]
+        if len(texts) < 2:
+            raise HTTPException(400, "At least 2 non-empty texts required for clustering")
+        
+        # Normalize weights
+        raw_weights = req.weights or {}
+        w_sem = float(raw_weights.get("semantic", DEFAULT_W_SEM))
+        w_pho = float(raw_weights.get("phonetic", DEFAULT_W_PHO))
+        w_con = float(raw_weights.get("concept", DEFAULT_W_CON))
+        
+        weights = {
+            "semantic": max(0.0, w_sem),
+            "phonetic": max(0.0, w_pho),
+            "concept": max(0.0, w_con),
+        }
+        
+        if any(value == 0.0 for value in weights.values()):
+            nonzero = {k: v for k, v in weights.items() if v > 0.0}
+            if nonzero:
+                total = sum(nonzero.values())
+                weights = {
+                    key: (value / total if value > 0 else 0.0)
+                    for key, value in weights.items()
+                }
+            else:
+                weights = {"semantic": 1 / 3, "phonetic": 1 / 3, "concept": 1 / 3}
+        else:
+            total = sum(weights.values())
+            if total <= 0:
+                weights = {"semantic": 1 / 3, "phonetic": 1 / 3, "concept": 1 / 3}
+            else:
+                weights = {k: v / total for k, v in weights.items()}
+        
+        # Validate eps and min_samples
+        eps = max(0.01, min(1.0, req.eps or 0.25))
+        min_samples = max(1, req.min_samples or 1)
+        
+        if DBSCAN is None:
+            raise HTTPException(500, "scikit-learn not installed. Install with: pip install scikit-learn")
+        
+        # Compute distance matrix
+        distance_matrix = compute_distance_matrix(texts, weights)
+        
+        # Run DBSCAN
+        clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='precomputed')
+        labels = clustering.fit_predict(distance_matrix)
+        
+        # Organize results by cluster
+        unique_labels = set(labels)
+        groups_dict: dict[int, list[int]] = {}
+        for idx, label in enumerate(labels):
+            if label not in groups_dict:
+                groups_dict[label] = []
+            groups_dict[label].append(idx)
+        
+        # Build response groups
+        groups: list[ClusterGroup] = []
+        noise_count = 0
+        
+        for group_id in sorted(unique_labels):
+            indices = groups_dict[group_id]
+            
+            if group_id == -1:  # DBSCAN noise points
+                noise_count = len(indices)
+                continue
+            
+            # Get texts and languages
+            group_texts = [texts[i] for i in indices]
+            group_langs = list(set(_detect_language(preprocess(t)) for t in group_texts))
+            
+            # Compute cluster metrics
+            cluster_distances = []
+            centroid_distances = []
+            
+            for i in indices:
+                for j in indices:
+                    if i < j:
+                        cluster_distances.append(float(distance_matrix[i][j]))
+            
+            # Average distance within cluster (confidence = 1 - avg_distance)
+            avg_distance = np.mean(cluster_distances) if cluster_distances else 0.0
+            confidence = max(0.0, 1.0 - avg_distance)
+            
+            # Determine dominant match reason
+            match_reason = "Similar content"
+            if len(group_texts) >= 2:
+                # Analyze first two texts in cluster
+                sem_score = float(cosine_similarity(embed(group_texts[0]), embed(group_texts[1])))
+                pho_score = phonetic_similarity(group_texts[0], group_texts[1])
+                con_score = app.state.concept_matcher.get_concept_score(group_texts[0], group_texts[1])
+                
+                if con_score == 1.0:
+                    match_reason = "Concept match"
+                elif pho_score > 0.8:
+                    match_reason = "High phonetic similarity"
+                elif sem_score > 0.8:
+                    match_reason = "High semantic similarity"
+                else:
+                    match_reason = "Clustered similarity"
+            
+            # Build cluster items
+            items: list[ClusterItem] = []
+            for idx, text_idx in enumerate(indices):
+                items.append(ClusterItem(
+                    id=str(text_idx),
+                    text=texts[text_idx],
+                    language=_detect_language(preprocess(texts[text_idx])),
+                    group_id=int(group_id),
+                    distance_to_centroid=float(np.mean([distance_matrix[text_idx][other_idx] for other_idx in indices if other_idx != text_idx])) if len(indices) > 1 else 0.0
+                ))
+            
+            groups.append(ClusterGroup(
+                group_id=int(group_id),
+                size=len(indices),
+                confidence=round(confidence, 4),
+                languages=sorted(group_langs),
+                items=items,
+                dominant_match_reason=match_reason
+            ))
+        
+        return ClusterResponse(
+            total_texts=len(texts),
+            num_clusters=len(groups),
+            num_noise_points=noise_count,
+            groups=groups,
+            eps=eps,
+            weights=weights,
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post(
@@ -1236,6 +1652,293 @@ def add_records_bulk_sync(texts: list[str], threshold: Optional[float] = None) -
         failed=failed,
         results=results,
     )
+
+
+@app.get(
+    "/demo-data",
+    tags=["Ops"],
+    summary="Get demo dataset",
+    description="Returns sample multilingual texts for testing and demonstration.",
+)
+def get_demo_data():
+    """Return demo data CSV that can be used for testing clustering."""
+    demo_texts = [
+        "Login issue",
+        "ログインの問題",
+        "Cannot log in",
+        "登录问题",
+        "Payment failed",
+        "الدفع فشل",
+        "Payment error",
+        "支払いエラー",
+        "Billing problem",
+        "Reset password",
+        "パスワードをリセット",
+        "Resetear contraseña",
+        "Oubli du mot de passe",
+        "Two factor authentication",
+        "二要素認証",
+        "Database connection error",
+        "データベース接続エラー",
+        "ডাটাবেস সংযোগ ত্রুটি",
+        "Koneksi database gagal",
+        "Apple Inc",
+        "Apple",
+        "りんご",
+        "Microsoft Corporation",
+        "Google",
+        "Coca-Cola",
+        "コカ・コーラ",
+        "可口可乐",
+        "Tokyo",
+        "東京",
+        "New York",
+        "Paris",
+        "パリ",
+        "USA",
+        "United States",
+        "Japan",
+        "日本",
+        "France",
+        "フランス",
+        "Account locked",
+        "アカウントがロックされている",
+        "Server timeout",
+        "サーバータイムアウト",
+        "Timeout error",
+        "Connection refused",
+        "接続が拒否されました",
+        "API error",
+        "APIエラー",
+        "Authentication failed",
+        "認証に失敗しました",
+        "Unauthorized access",
+    ]
+    return {
+        "count": len(demo_texts),
+        "texts": demo_texts,
+        "description": "Sample multilingual texts for testing clustering and duplication detection"
+    }
+
+
+@app.post(
+    "/load-demo-data",
+    response_model=BulkAddResponse,
+    tags=["Records"],
+    summary="Load demo dataset into database",
+    description="Loads sample multilingual texts into the record store for testing.",
+)
+def load_demo_data():
+    """Load demo dataset and add to records."""
+    demo_texts = [
+        "Login issue",
+        "ログインの問題",
+        "Cannot log in",
+        "登录问题",
+        "Payment failed",
+        "الدفع فشل",
+        "Payment error",
+        "支払いエラー",
+        "Billing problem",
+        "Reset password",
+        "パスワードをリセット",
+        "Resetear contraseña",
+        "Oubli du mot de passe",
+        "Two factor authentication",
+        "二要素認証",
+        "Database connection error",
+        "データベース接続エラー",
+        "ডাটাবেস সংযোগ ত্রুটি",
+        "Koneksi database gagal",
+        "Apple Inc",
+        "Apple",
+        "りんご",
+        "Microsoft Corporation",
+        "Google",
+        "Coca-Cola",
+        "コカ・コーラ",
+        "可口可乐",
+        "Tokyo",
+        "東京",
+        "New York",
+        "Paris",
+        "パリ",
+        "USA",
+        "United States",
+        "Japan",
+        "日本",
+        "France",
+        "フランス",
+        "Account locked",
+        "アカウントがロックされている",
+        "Server timeout",
+        "サーバータイムアウト",
+        "Timeout error",
+        "Connection refused",
+        "接続が拒否されました",
+        "API error",
+        "APIエラー",
+        "Authentication failed",
+        "認証に失敗しました",
+        "Unauthorized access",
+    ]
+    
+    return add_records_bulk_sync(demo_texts, DUPLICATE_THRESHOLD)
+
+
+@app.delete(
+    "/records",
+    tags=["Records"],
+    summary="Clear all records",
+    description="Delete all stored records (useful for resetting during testing).",
+)
+def clear_all_records():
+    """Clear all records from the database."""
+    db = _get_db()
+    if db:
+        docs = db.collection(COLLECTION).stream()
+        for doc in docs:
+            doc.reference.delete()
+    else:
+        sql = _get_sqlite()
+        if sql:
+            sql.execute("DELETE FROM records")
+            sql.commit()
+        else:
+            _memory_store.clear()
+    
+    _mark_index_dirty()
+    return {"deleted": "all records", "status": "success"}
+
+
+@app.get(
+    "/report",
+    tags=["Records"],
+    summary="Generate summary report",
+    description="Generate a text-based summary report of all records and clustering analysis.",
+)
+def generate_report():
+    """Generate a summary report of stored records."""
+    records = _all_records()
+    
+    if not records:
+        return {
+            "title": "DupliDetect Summary Report",
+            "timestamp": str(os.sys.datetime.now() if hasattr(os, 'sys') else ""),
+            "total_records": 0,
+            "unique_languages": [],
+            "content": "No records in database."
+        }
+    
+    import datetime
+    
+    # Compute statistics
+    langs = {}
+    for rec in records:
+        lang = rec.get("language", "unknown")
+        langs[lang] = langs.get(lang, 0) + 1
+    
+    # Group by similarity (simple approach)
+    groups = {}
+    for idx, rec in enumerate(records):
+        if idx == 0:
+            groups[0] = [idx]
+        else:
+            # Compare with existing groups (simple clustering)
+            best_sim = -1.0
+            best_group = 0
+            for g_id, g_indices in groups.items():
+                if g_id == -1:
+                    continue
+                ref_idx = g_indices[0]
+                sim = cosine_similarity(embed(records[idx]["text"]), embed(records[ref_idx]["text"]))
+                if sim > best_sim and sim >= 0.7:  # Simple threshold
+                    best_sim = sim
+                    best_group = g_id
+            
+            if best_sim >= 0.7:
+                groups[best_group].append(idx)
+            else:
+                groups[len(groups)] = [idx]
+    
+    # Generate report content
+    report_lines = [
+        "=" * 80,
+        "DupliDetect Analysis Summary Report",
+        "=" * 80,
+        f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "DATABASE STATISTICS",
+        "-" * 80,
+        f"Total Records: {len(records)}",
+        f"Unique Languages: {len(langs)}",
+        f"Language Distribution: {', '.join(f'{k}({v})' for k, v in sorted(langs.items()))}",
+        f"Detected Groups: {len([g for g in groups.values() if len(g) > 1])}",
+        "",
+        "SAMPLE RECORDS (First 10)",
+        "-" * 80,
+    ]
+    
+    for idx, rec in enumerate(records[:10]):
+        report_lines.append(f"{idx + 1}. [{rec.get('language', 'unknown')}] {rec.get('text', '')[:60]}...")
+    
+    if len(records) > 10:
+        report_lines.append(f"... and {len(records) - 10} more records")
+    
+    report_lines.extend([
+        "",
+        "DUPLICATE GROUPS",
+        "-" * 80,
+    ])
+    
+    group_count = 0
+    for g_id, g_indices in sorted(groups.items()):
+        if len(g_indices) > 1:
+            group_count += 1
+            report_lines.append(f"Group {group_count} ({len(g_indices)} items):")
+            for idx in g_indices[:3]:
+                report_lines.append(f"  - [{records[idx].get('language', 'unknown')}] {records[idx].get('text', '')[:50]}...")
+            if len(g_indices) > 3:
+                report_lines.append(f"  ... and {len(g_indices) - 3} more")
+    
+    if group_count == 0:
+        report_lines.append("No duplicate groups detected above threshold.")
+    
+    report_lines.extend([
+        "",
+        "CONFIGURATION",
+        "-" * 80,
+        f"Model: {MODEL_NAME}",
+        f"Default Threshold: {DEFAULT_THRESHOLD}",
+        f"W_SEM: {DEFAULT_W_SEM}, W_PHO: {DEFAULT_W_PHO}, W_CON: {DEFAULT_W_CON}",
+        "",
+        "=" * 80,
+    ])
+    
+    return {
+        "title": "DupliDetect Summary Report",
+        "timestamp": datetime.datetime.now().isoformat(),
+        "total_records": len(records),
+        "unique_languages": sorted(langs.keys()),
+        "duplicate_groups_detected": group_count,
+        "content": "\n".join(report_lines)
+    }
+
+
+from fastapi.responses import PlainTextResponse
+
+
+@app.get(
+    "/report/download",
+    tags=["Records"],
+    summary="Download report as text file",
+    description="Download the summary report as a text file.",
+)
+def download_report():
+    """Download report as text file."""
+    report = generate_report()
+    return PlainTextResponse(report["content"], filename="duplidetect_report.txt")
+
 
 
 @app.get(

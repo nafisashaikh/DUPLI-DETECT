@@ -1,11 +1,23 @@
 // Shared TypeScript types for DupliDetect
 
+export interface ScoreWeights {
+  semantic: number;
+  phonetic: number;
+  concept: number;
+}
+
 export interface CompareResult {
   text1: string;
   text2: string;
-  similarity_score: number;   // 0-100
+  semantic_score: number;
+  phonetic_score: number;
+  concept_score: number;
+  combined_score: number;
+  similarity_score: number;   // 0-100 combined score for backward compatibility
+  threshold: number;
+  weights: ScoreWeights;
   is_duplicate: boolean;
-  duplicate_type: "typo" | "language_difference" | "semantic" | "not_duplicate";
+  duplicate_type: "typo" | "language_difference" | "semantic" | "phonetic" | "concept" | "not_duplicate";
   lang1: string;
   lang2: string;
 }

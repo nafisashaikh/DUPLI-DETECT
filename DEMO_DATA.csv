@@ -1,0 +1,51 @@
+id,text,language,source
+1,Login issue,en,support_ticket
+2,ログインの問題,ja,support_ticket
+3,Cannot log in,en,support_ticket
+4,登录问题,zh,support_ticket
+5,Payment failed,en,support_ticket
+6,الدفع فشل,ar,support_ticket
+7,Payment error,en,support_ticket
+8,支払いエラー,ja,support_ticket
+9,Billing problem,en,support_ticket
+10,Reset password,en,support_ticket
+11,パスワードをリセット,ja,support_ticket
+12,Resetear contraseña,es,support_ticket
+13,Oubli du mot de passe,fr,support_ticket
+14,Two factor authentication,en,support_ticket
+15,二要素認証,ja,support_ticket
+16,Database connection error,en,technical
+17,データベース接続エラー,ja,technical
+18,ডাটাবেস সংযোগ ত্রুটি,bn,technical
+19,Koneksi database gagal,id,technical
+20,Apple Inc,en,company
+21,Apple,en,fruit
+22,りんご,ja,fruit
+23,Microsoft Corporation,en,company
+24,Google,en,company
+25,Coca-Cola,en,brand
+26,コカ・コーラ,ja,brand
+27,可口可乐,zh,brand
+28,Tokyo,en,city
+29,東京,ja,city
+30,New York,en,city
+31,Paris,en,city
+32,パリ,ja,city
+33,USA,en,country
+34,United States,en,country
+35,Japan,en,country
+36,日本,ja,country
+37,France,en,country
+38,フランス,ja,country
+39,Account locked,en,support_ticket
+40,アカウントがロックされている,ja,support_ticket
+41,Server timeout,en,technical
+42,サーバータイムアウト,ja,technical
+43,Timeout error,en,technical
+44,Connection refused,en,technical
+45,接続が拒否されました,ja,technical
+46,API error,en,technical
+47,APIエラー,ja,technical
+48,Authentication failed,en,technical
+49,認証に失敗しました,ja,technical
+50,Unauthorized access,en,technical

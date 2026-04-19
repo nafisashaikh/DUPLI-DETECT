@@ -1,0 +1,5 @@
+# New dependencies for Brain 2 (Phonetic) and Brain 3 (Conceptual)
+
+fasttext-langdetect>=0.2.1  # Language detection for phonetic transcription fallback handling
+epitran>=0.2.27              # IPA transliteration for phonetic similarity (Brain 2)
+rapidfuzz>=3.0.0             # Fast normalized Levenshtein distance for IPA comparison
