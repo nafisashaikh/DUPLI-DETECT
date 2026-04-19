@@ -399,7 +399,7 @@ export default function ClusterPage() {
                     key={group.group_id}
                     group={group}
                     isSelected={selectedGroupId === group.group_id}
-                    onSelect={(gid) =>
+                    onSelect={(gid: number) =>
                       setSelectedGroupId(
                         selectedGroupId === gid ? null : gid
                       )

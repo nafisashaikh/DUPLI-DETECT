@@ -135,15 +135,18 @@ export async function addRecordsBulk(
   return { ...progress, results, errors };
 }
 
-export function addRecordsBulkServer(texts: string[], threshold?: number): Promise<BulkAddResponse> {
+export function addRecordsBulkServer(
+  payload: { texts?: string[], records?: { text: string, item?: string, description?: string, amount?: string, language?: string }[] },
+  threshold?: number
+): Promise<BulkAddResponse> {
   return api<BulkAddResponse>("/add-records-bulk", {
     method: "POST",
-    body: JSON.stringify({ texts, threshold }),
+    body: JSON.stringify({ ...payload, threshold }),
   });
 }
 
 export async function addRecordsBulkServerChunked(
-  texts: string[],
+  records: { text: string, item?: string, description?: string, amount?: string, language?: string }[],
   options?: {
     chunkSize?: number;
     threshold?: number;
@@ -151,13 +154,13 @@ export async function addRecordsBulkServerChunked(
   }
 ): Promise<BulkAddResponse> {
   const chunkSize = Math.max(1, Math.min(options?.chunkSize ?? defaultBulkChunkSize(), 2000));
-  const total = texts.length;
+  const total = records.length;
   const progress: BulkAddProgress = { done: 0, total, added: 0, duplicates: 0, failed: 0 };
   const all: BulkAddResponse = { total, added: 0, duplicates: 0, failed: 0, results: [] };
 
-  for (let i = 0; i < texts.length; i += chunkSize) {
-    const chunk = texts.slice(i, i + chunkSize);
-    const r = await addRecordsBulkServer(chunk, options?.threshold);
+  for (let i = 0; i < records.length; i += chunkSize) {
+    const chunk = records.slice(i, i + chunkSize);
+    const r = await addRecordsBulkServer({ records: chunk }, options?.threshold);
     all.added += r.added;
     all.duplicates += r.duplicates;
     all.failed += r.failed;

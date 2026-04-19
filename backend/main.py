@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from concept import ConceptMatcher, get_concept_score as concept_similarity
-from phonetic import phonetic_similarity
+from phonetic import get_phonetic_similarity as phonetic_similarity
 
 import numpy as np
 import uvicorn
@@ -629,9 +629,19 @@ class Record(BaseModel):
         }
     }
 
+class BulkRecordItem(BaseModel):
+    text: str
+    item: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[str] = None
+    language: Optional[str] = None
+
 class BulkAddRequest(BaseModel):
-    texts: list[str] = Field(
-        ..., description="List of texts to insert.", examples=[["Login issue", "Cannot log in", "ログインの問題"]]
+    texts: Optional[list[str]] = Field(
+        default=None, description="List of texts to insert.", examples=[["Login issue", "Cannot log in", "ログインの問題"]]
+    )
+    records: Optional[list[BulkRecordItem]] = Field(
+        default=None, description="List of rich records to insert."
     )
     threshold: Optional[float] = Field(
         default=DUPLICATE_THRESHOLD,
@@ -1271,17 +1281,22 @@ def add_record(req: AddRecordRequest):
     ),
 )
 def add_records_bulk(req: BulkAddRequest):
-    texts_in = [t for t in req.texts if isinstance(t, str) and t.strip()]
+    records_in = []
+    if req.records:
+        records_in = [r for r in req.records if r.text.strip()]
+    elif req.texts:
+        records_in = [BulkRecordItem(text=t) for t in req.texts if isinstance(t, str) and t.strip()]
+    
     threshold = req.threshold if req.threshold is not None else DUPLICATE_THRESHOLD
     threshold = max(0.0, min(1.0, threshold))
 
-    if not texts_in:
+    if not records_in:
         return BulkAddResponse(total=0, added=0, duplicates=0, failed=0, results=[])
 
     ids, base_texts, base_langs, base_mat = _get_embedding_index()
     base = base_mat if base_mat is not None else np.zeros((0, _get_emb_dim()), dtype=np.float32)
 
-    embs = embed_many(texts_in)
+    embs = embed_many([r.text for r in records_in])
 
     results: list[AddRecordResponse] = []
     added = duplicates = failed = 0
@@ -1301,10 +1316,14 @@ def add_records_bulk(req: BulkAddRequest):
         pending_mat = np.vstack([pending_mat, tail]) if pending_mat.shape[0] else tail
         pending_tail = []
 
-    for i, text in enumerate(texts_in):
+    for i, rec in enumerate(records_in):
+        text = rec.text
         try:
             lang = _detect_language(preprocess(text))
+            if rec.language:
+                lang = rec.language
             emb = embs[i]
+
 
             best_sim = -1.0
             best_id = ""
@@ -1359,7 +1378,7 @@ def add_records_bulk(req: BulkAddRequest):
                 )
                 continue
 
-            rid = _add_record_store(text, lang, emb.tolist())
+            rid = _add_record_store(text, lang, emb.tolist(), item=rec.item, description=rec.description, amount=rec.amount)
             added += 1
             results.append(AddRecordResponse(id=rid, text=text, language=lang, inserted=True))
             pending_ids.append(rid)
@@ -1388,7 +1407,7 @@ def add_records_bulk(req: BulkAddRequest):
         _mark_index_dirty()
 
     return BulkAddResponse(
-        total=len(texts_in),
+        total=len(records_in),
         added=added,
         duplicates=duplicates,
         failed=failed,

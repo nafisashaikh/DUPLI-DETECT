@@ -5,10 +5,7 @@ import type { Record as DDRecord, SearchMatch } from "@/lib/types";
 import styles from "./dashboard.module.css";
 
 // ─── D3 graph types (minimal, avoid full import in SSR) ───────────────────
-interface GraphNode {
-  id: string;
-  text: string;
-  language: string;
+interface GraphNode extends DDRecord {
   x: number;
   y: number;
   color: string;
@@ -31,25 +28,8 @@ function getColor(group: number) {
   return GROUP_COLORS[group % GROUP_COLORS.length];
 }
 
-// Assign groups via union-find
-function buildGroups(nodes: DDRecord[], edges: { a: number; b: number }[]) {
-  const parent = nodes.map((_, i) => i);
-  function find(x: number): number {
-    if (parent[x] !== x) parent[x] = find(parent[x]);
-    return parent[x];
-  }
-  function union(x: number, y: number) {
-    parent[find(x)] = find(y);
-  }
-  edges.forEach(({ a, b }) => union(a, b));
-  const rootToGroup: Record<number, number> = {};
-  let g = 0;
-  return nodes.map((_, i) => {
-    const r = find(i);
-    if (!(r in rootToGroup)) rootToGroup[r] = g++;
-    return rootToGroup[r];
-  });
-}
+// Groups are now built using DBSCAN dynamically via /cluster API
+
 
 export default function DashboardPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,7 +65,34 @@ export default function DashboardPage() {
         });
       });
 
-      const groups = buildGroups(recs, edgesRaw.map((e) => ({ a: e.a, b: e.b })));
+      // Use actual DBSCAN implementation from the /cluster API instead of naive union-find
+      const clusterResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/cluster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texts: recs.map(r => r.text), eps: Math.max(0.01, 1 - (thresh / 100)) })
+      });
+      const clusterData = await clusterResponse.json();
+      
+      const nodeToGroup: number[] = new Array(recs.length).fill(-1);
+      let maxGroup = 0;
+      if (clusterData.groups) {
+        clusterData.groups.forEach((g: any) => {
+          if (g.group_id > maxGroup) maxGroup = g.group_id;
+          g.items.forEach((item: any) => {
+            const i = parseInt(item.id, 10);
+            if (!isNaN(i)) nodeToGroup[i] = g.group_id;
+          });
+        });
+      }
+      
+      // Assign DBSCAN noise points (-1) to their own isolated clusters
+      nodeToGroup.forEach((g, i) => {
+        if (g === -1) {
+          maxGroup++;
+          nodeToGroup[i] = maxGroup;
+        }
+      });
+      const groups = nodeToGroup;
       const W = canvasRef.current?.width ?? 800;
       const H = canvasRef.current?.height ?? 500;
       const cx = W / 2, cy = H / 2;
@@ -94,7 +101,7 @@ export default function DashboardPage() {
       const nodes: GraphNode[] = recs.map((r, i) => {
         const angle = (2 * Math.PI * i) / recs.length - Math.PI / 2;
         return {
-          id: r.id, text: r.text, language: r.language,
+          ...r,
           x: cx + R * Math.cos(angle),
           y: cy + R * Math.sin(angle),
           color: getColor(groups[i]),

@@ -97,7 +97,15 @@ export default function SearchPage() {
     fetchRecords();
   };
 
-  const extractCsvTexts = async (file: File): Promise<string[]> => {
+  interface ExtractedRecord {
+    text: string;
+    item?: string;
+    description?: string;
+    amount?: string;
+    language?: string;
+  }
+
+  const extractCsvTexts = async (file: File): Promise<ExtractedRecord[]> => {
     const parseWithHeader = () =>
       new Promise<Papa.ParseResult<Record<string, unknown>>>((resolve, reject) => {
         Papa.parse<Record<string, unknown>>(file, {
@@ -135,7 +143,7 @@ export default function SearchPage() {
     if (!Array.isArray(data) || data.length === 0) return [];
 
     const fieldLower = metaFields.map((f) => f.toLowerCase());
-    const textFieldIndex = fieldLower.findIndex((f) => f === "text" || f === "record" || f === "message" || f === "title");
+    const textFieldIndex = fieldLower.findIndex((f) => f === "name" || f === "text" || f === "record" || f === "message" || f === "title");
     const recognizedHeader = textFieldIndex >= 0;
 
     // If the “header” looks like actual record text (common in 1-column CSVs with no header), reparse.
@@ -150,32 +158,44 @@ export default function SearchPage() {
       const texts = rows
         .map((row) => (Array.isArray(row) ? (row[0] ?? "") : "").toString().trim())
         .filter(Boolean);
-      const unique: string[] = [];
+      const unique: ExtractedRecord[] = [];
       const seen = new Set<string>();
       for (const t of texts) {
         if (seen.has(t)) continue;
         seen.add(t);
-        unique.push(t);
+        unique.push({ text: t });
       }
       return unique;
     }
 
     const chosenField = recognizedHeader ? metaFields[textFieldIndex] : metaFields[0];
+    const descField = metaFields.find(f => f.toLowerCase() === "description" || f.toLowerCase() === "desc");
+    const itemField = metaFields.find(f => f.toLowerCase() === "id" || f.toLowerCase() === "item");
+    const amountField = metaFields.find(f => f.toLowerCase() === "amount" || f.toLowerCase() === "price" || f.toLowerCase() === "quantity");
+    const langField = metaFields.find(f => f.toLowerCase() === "language" || f.toLowerCase() === "lang");
 
-    const texts = data
+    const records = data
       .map((row) => {
-        const v = (row as Record<string, unknown>)[chosenField];
-        return (v ?? "").toString().trim();
+        const r = row as Record<string, unknown>;
+        const v = r[chosenField];
+        const textStr = (v ?? "").toString().trim();
+        if (!textStr) return null;
+        const rec: ExtractedRecord = { text: textStr };
+        if (itemField && r[itemField]) rec.item = r[itemField]?.toString().trim();
+        if (descField && r[descField]) rec.description = r[descField]?.toString().trim();
+        if (amountField && r[amountField]) rec.amount = r[amountField]?.toString().trim();
+        if (langField && r[langField]) rec.language = r[langField]?.toString().trim();
+        return rec;
       })
-      .filter(Boolean);
+      .filter((r): r is ExtractedRecord => r !== null);
 
     // De-dupe within upload to avoid wasting API calls
-    const unique: string[] = [];
+    const unique: ExtractedRecord[] = [];
     const seen = new Set<string>();
-    for (const t of texts) {
-      if (seen.has(t)) continue;
-      seen.add(t);
-      unique.push(t);
+    for (const r of records) {
+      if (seen.has(r.text)) continue;
+      seen.add(r.text);
+      unique.push(r);
     }
     return unique;
   };
@@ -185,14 +205,14 @@ export default function SearchPage() {
     setCsvProgress(null);
     setCsvUploading(true);
     try {
-      const texts = await extractCsvTexts(file);
-      if (texts.length === 0) {
-        setCsvMsg({ type: "warn", text: "No usable rows found. Include a 'text' column (recommended) or put the record text in the first column." });
+      const records = await extractCsvTexts(file);
+      if (records.length === 0) {
+        setCsvMsg({ type: "warn", text: "No usable rows found. Include a 'text' or 'name' column (recommended) or put the record text in the first column." });
         return;
       }
 
-      setCsvProgress({ done: 0, total: texts.length, added: 0, duplicates: 0, failed: 0 });
-      const result = await addRecordsBulkServerChunked(texts, {
+      setCsvProgress({ done: 0, total: records.length, added: 0, duplicates: 0, failed: 0 });
+      const result = await addRecordsBulkServerChunked(records, {
         chunkSize: defaultBulkChunkSize(),
         threshold: threshold / 100,
         onProgress: (p) => setCsvProgress(p),
@@ -293,7 +313,16 @@ export default function SearchPage() {
                     <div className={styles.matchTop}>
                       <div className={styles.matchTextRow}>
                         <LanguageFlag lang={m.language} />
-                        <span className={styles.matchText}>{m.text}</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span className={styles.matchText}>{m.text}</span>
+                          {(m.item || m.description || m.amount) && (
+                            <div style={{ fontSize: "0.85em", color: "var(--fg-muted)", marginTop: "2px" }}>
+                              {m.item && <div><strong>Item:</strong> {m.item}</div>}
+                              {m.description && <div><strong>Description:</strong> {m.description}</div>}
+                              {m.amount && <div><strong>Amount:</strong> {m.amount}</div>}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <span className="badge badge-info">{m.language}</span>
                     </div>
@@ -428,8 +457,19 @@ export default function SearchPage() {
                   className={styles.recordRow}
                 >
                   <div className={styles.recordLeft}>
-                    <span className={styles.recordText}>{r.text}</span>
-                    <span className={`badge badge-info ${styles.badgeSelf}`}>{r.language}</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span className={styles.recordText}>{r.text}</span>
+                        <span className={`badge badge-info ${styles.badgeSelf}`}>{r.language}</span>
+                      </div>
+                      {(r.item || r.description || r.amount) && (
+                        <div style={{ fontSize: "0.85em", color: "var(--fg-muted)", marginTop: "2px" }}>
+                          {r.item && <div><strong>Item:</strong> {r.item}</div>}
+                          {r.description && <div><strong>Description:</strong> {r.description}</div>}
+                          {r.amount && <div><strong>Amount:</strong> {r.amount}</div>}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => handleDelete(r.id)}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import fasttext_langdetect
+import langdetect
 import epitran
 from rapidfuzz.distance import Levenshtein
 
@@ -26,13 +26,12 @@ FALLBACK_SCORE = 0.5
 
 
 def _detect_language(text: str) -> dict[str, Any]:
-    """Detect language with fasttext_langdetect and return the label plus confidence."""
+    """Detect language with langdetect and return the label plus confidence."""
     try:
-        result = fasttext_langdetect.detect(text)
-        if isinstance(result, dict):
-            lang = result.get("lang")
-            score = float(result.get("score", 0.0))
-            return {"lang": str(lang) if lang is not None else "", "score": score}
+        result = langdetect.detect_langs(text)
+        if result:
+            top_result = result[0]
+            return {"lang": str(top_result.lang), "score": float(top_result.prob)}
     except Exception:
         pass
     return {"lang": "", "score": 0.0}
@@ -56,7 +55,7 @@ def _get_epitran(lang: str) -> Any | None:
 def get_phonetic_similarity(text1: str, text2: str) -> float:
     """Return a phonetic similarity score between 0 and 1 using phonetic transcription.
 
-    The function uses fasttext_langdetect to infer the language for each input text,
+    The function uses langdetect to infer the language for each input text,
     then uses Epitran to transliterate both texts into IPA. The phonetic similarity
     is calculated as 1 minus the normalized Levenshtein distance between the two IPA
     strings.

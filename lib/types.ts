@@ -27,6 +27,9 @@ export interface SearchMatch {
   text: string;
   similarity: number;   // 0-100
   language: string;
+  item?: string;
+  description?: string;
+  amount?: string;
 }
 
 export interface SearchResponse {
