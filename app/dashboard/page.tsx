@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { searchSimilar, listRecords } from "@/lib/api";
 import type { Record as DDRecord, SearchMatch } from "@/lib/types";
+import styles from "./dashboard.module.css";
 
 // ─── D3 graph types (minimal, avoid full import in SSR) ───────────────────
 interface GraphNode {
@@ -257,48 +258,54 @@ export default function DashboardPage() {
     setSelected(hit);
   };
 
+  const clusterClass = (group: number) => {
+    const g = ((group % GROUP_COLORS.length) + GROUP_COLORS.length) % GROUP_COLORS.length;
+    return (styles as Record<string, string>)[`cluster${g}`] ?? "";
+  };
+
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 24px 80px" }}>
-      <div className="animate-fade-up" style={{ marginBottom: 28 }}>
-        <p className="section-label" style={{ marginBottom: 8 }}>Feature 5 — Visual Dashboard</p>
-        <h1 style={{ fontSize: "clamp(1.6rem,4vw,2.4rem)", marginBottom: 8 }}>Similarity Graph</h1>
-        <p style={{ color: "var(--text-secondary)" }}>
+    <div className={styles.container}>
+      <div className={`${styles.header} animate-fade-up`}>
+        <p className="section-label">Feature 5 — Visual Dashboard</p>
+        <h1 className={styles.headerTitle}>Similarity Graph</h1>
+        <p className={styles.headerSubtitle}>
           Nodes are records. Edges connect duplicates. Same color = same cluster.
         </p>
       </div>
 
       {/* Stats */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
+      <div className={styles.statsRow}>
         {[
           { v: stats.nodes, label: "Records", icon: "⬡" },
           { v: stats.edges, label: "Edges", icon: "—" },
           { v: stats.groups, label: "Clusters", icon: "◉" },
         ].map((s) => (
-          <div key={s.label} className="card" style={{ padding: "14px 22px", display: "flex", gap: 12, alignItems: "center" }}>
-            <span style={{ fontSize: 18, color: "var(--accent)" }}>{s.icon}</span>
+          <div key={s.label} className={`card ${styles.statCard}`}>
+            <span className={styles.statIcon}>{s.icon}</span>
             <div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 800 }}>{s.v}</div>
-              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{s.label}</div>
+              <div className={styles.statValue}>{s.v}</div>
+              <div className={styles.statLabel}>{s.label}</div>
             </div>
           </div>
         ))}
 
         {/* Controls */}
-        <div className="card" style={{ padding: "14px 22px", display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 260 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: 4 }}>
+        <div className={`card ${styles.controlsCard}`}>
+          <div className={styles.controlsLeft}>
+            <div className={styles.controlsMeta}>
               <span>Edge threshold</span>
-              <span style={{ color: "var(--accent)", fontWeight: 700 }}>{threshold}%</span>
+              <span className={styles.thresholdValue}>{threshold}%</span>
             </div>
             <input
               type="range" min={30} max={99} step={1}
               value={threshold} onChange={(e) => setThreshold(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--accent)" }}
+              className={styles.range}
+              aria-label="Edge threshold"
+              title="Edge threshold"
             />
           </div>
           <button
-            className="btn btn-primary"
-            style={{ padding: "9px 18px", whiteSpace: "nowrap" }}
+            className={`btn btn-primary ${styles.rebuildButton}`}
             onClick={() => buildGraph(records, threshold)}
             disabled={loading}
           >
@@ -309,59 +316,41 @@ export default function DashboardPage() {
 
       {/* Canvas */}
       <div
-        className="card"
-        style={{
-          padding: 0,
-          overflow: "hidden",
-          position: "relative",
-          height: 520,
-        }}
+        className={`card ${styles.canvasCard}`}
       >
         {error && !loading && (
           <div
-            style={{
-              position: "absolute", inset: 0,
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              color: "var(--text-secondary)", gap: 10, padding: 24, textAlign: "center",
-            }}
+            className={styles.overlay}
           >
-            <span style={{ fontSize: 40, color: "var(--danger)" }}>⚠</span>
-            <p style={{ fontWeight: 700, color: "var(--danger)" }}>Backend unreachable</p>
-            <p style={{ maxWidth: 680 }}>{error}</p>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", maxWidth: 720 }}>
+            <span className={styles.overlayWarnIcon}>⚠</span>
+            <p className={styles.overlayWarnTitle}>Backend unreachable</p>
+            <p className={styles.overlayBody}>{error}</p>
+            <p className={styles.overlayHint}>
               Start the FastAPI server on port 8000, then refresh this page.
             </p>
           </div>
         )}
         {records.length === 0 && !loading && !error && (
           <div
-            style={{
-              position: "absolute", inset: 0,
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              color: "var(--text-muted)", gap: 12,
-            }}
+            className={`${styles.overlay} ${styles.overlayMuted}`}
           >
-            <span style={{ fontSize: 40 }}>📭</span>
+            <span className={styles.overlayWarnIcon}>📭</span>
             <p>No records yet — add some in the Search page!</p>
           </div>
         )}
         {loading && (
           <div
-            style={{
-              position: "absolute", inset: 0, zIndex: 10,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(10,11,20,0.7)",
-            }}
+            className={`${styles.overlay} ${styles.overlayBackdrop}`}
           >
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-              <span className="animate-spin" style={{ display: "inline-block", fontSize: 28, color: "var(--accent)" }}>⟳</span>
-              <span style={{ color: "var(--text-secondary)" }}>Building similarity graph…</span>
+            <div className={styles.loadingStack}>
+              <span className={`animate-spin ${styles.loadingIcon}`}>⟳</span>
+              <span className={styles.loadingText}>Building similarity graph…</span>
             </div>
           </div>
         )}
         <canvas
           ref={canvasRef}
-          style={{ width: "100%", height: "100%", display: "block" }}
+          className={styles.canvas}
           onMouseMove={handleMouseMove}
           onClick={handleClick}
           onMouseLeave={() => setHovered(null)}
@@ -370,28 +359,28 @@ export default function DashboardPage() {
 
       {/* Selected node detail */}
       {selected && (
-        <div className="card animate-fade-up" style={{ padding: 20, marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <div className={`card animate-fade-up ${styles.selectedCard}`}>
+          <div className={styles.selectedTop}>
             <div>
-              <p className="section-label" style={{ marginBottom: 4 }}>Selected Record</p>
-              <h3 style={{ fontSize: "1.1rem" }}>{selected.text}</h3>
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <p className="section-label">Selected Record</p>
+              <h3 className={styles.selectedTitle}>{selected.text}</h3>
+              <div className={styles.selectedBadges}>
                 <span className="badge badge-info">{selected.language}</span>
-                <span className="badge" style={{ background: `${selected.color}22`, color: selected.color, border: `1px solid ${selected.color}44` }}>
+                <span className={`badge ${styles.clusterBadge} ${clusterClass(selected.group)}`}>
                   Cluster {selected.group + 1}
                 </span>
               </div>
             </div>
-            <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 18 }}>✕</button>
+            <button onClick={() => setSelected(null)} className={styles.closeButton}>✕</button>
           </div>
-          <div style={{ marginTop: 14 }}>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 8 }}>Connected to:</p>
+          <div className={styles.connections}>
+            <p className={styles.connectionsLabel}>Connected to:</p>
             {graphEdges.filter((e) => e.source.id === selected.id || e.target.id === selected.id).map((e, i) => {
               const peer = e.source.id === selected.id ? e.target : e.source;
               return (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: "0.875rem" }}>{peer.text}</span>
-                  <span style={{ color: "var(--success)", fontWeight: 700, fontSize: "0.85rem" }}>{Math.round(e.weight * 100)}%</span>
+                <div key={i} className={styles.connectionRow}>
+                  <span className={styles.connectionText}>{peer.text}</span>
+                  <span className={styles.connectionWeight}>{Math.round(e.weight * 100)}%</span>
                 </div>
               );
             })}
@@ -400,11 +389,11 @@ export default function DashboardPage() {
       )}
 
       {/* Legend */}
-      <div style={{ marginTop: 20, display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div className={styles.legend}>
         {Array.from(new Set(graphNodes.map((n) => n.group))).map((g) => (
-          <div key={g} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 12, height: 12, borderRadius: 99, background: getColor(g) }} />
-            <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>Cluster {g + 1}</span>
+          <div key={g} className={styles.legendItem}>
+            <div className={`${styles.legendDot} ${clusterClass(g)}`} />
+            <span className={styles.legendText}>Cluster {g + 1}</span>
           </div>
         ))}
       </div>

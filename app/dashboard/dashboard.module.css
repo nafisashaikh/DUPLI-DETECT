@@ -1,0 +1,259 @@
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.header {
+  margin-bottom: 28px;
+}
+
+.headerTitle {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  margin-bottom: 8px;
+}
+
+.headerSubtitle {
+  color: var(--text-secondary);
+}
+
+.statsRow {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.statCard {
+  padding: 14px 22px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.statIcon {
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.statValue {
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+.statLabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.controlsCard {
+  padding: 14px 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.controlsLeft {
+  flex: 1;
+}
+
+.controlsMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.thresholdValue {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.rebuildButton {
+  padding: 9px 18px;
+  white-space: nowrap;
+}
+
+.canvasCard {
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  height: 520px;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.overlayMuted {
+  color: var(--text-muted);
+  gap: 12px;
+}
+
+.overlayBackdrop {
+  z-index: 10;
+  background: rgba(10, 11, 20, 0.7);
+  flex-direction: row;
+}
+
+.overlayWarnIcon {
+  font-size: 40px;
+  color: var(--danger);
+}
+
+.overlayWarnTitle {
+  font-weight: 700;
+  color: var(--danger);
+}
+
+.overlayBody {
+  max-width: 680px;
+}
+
+.overlayHint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  max-width: 720px;
+}
+
+.loadingStack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.loadingIcon {
+  display: inline-block;
+  font-size: 28px;
+  color: var(--accent);
+}
+
+.loadingText {
+  color: var(--text-secondary);
+}
+
+.canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.selectedCard {
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.selectedTop {
+  display: flex;
+  justify-content: space-between;
+}
+
+.selectedTitle {
+  font-size: 1.1rem;
+}
+
+.selectedBadges {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.clusterBadge {
+  border: 1px solid transparent;
+}
+
+/* Cluster colors (match GROUP_COLORS) */
+.cluster0 { --cluster-color: #6378ff; }
+.cluster1 { --cluster-color: #a855f7; }
+.cluster2 { --cluster-color: #22d3ee; }
+.cluster3 { --cluster-color: #f59e0b; }
+.cluster4 { --cluster-color: #10b981; }
+.cluster5 { --cluster-color: #f43f5e; }
+.cluster6 { --cluster-color: #ec4899; }
+.cluster7 { --cluster-color: #8b5cf6; }
+
+.clusterBadge {
+  background: color-mix(in srgb, var(--cluster-color) 13%, transparent);
+  color: var(--cluster-color);
+  border-color: color-mix(in srgb, var(--cluster-color) 26%, transparent);
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+
+.connections {
+  margin-top: 14px;
+}
+
+.connectionsLabel {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.connectionRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+.connectionText {
+  font-size: 0.875rem;
+}
+
+.connectionWeight {
+  color: var(--success);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.legend {
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 99px;
+  background: var(--cluster-color);
+}
+
+.legendText {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
