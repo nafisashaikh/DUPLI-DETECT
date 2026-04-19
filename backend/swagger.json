@@ -1,0 +1,811 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DupliDetect API",
+    "description": "Multilingual duplicate detection using sentence-transformers.\n\n**Core idea**: preprocess → embed → cosine similarity → classify duplicate type.\n\n**Storage**: Firestore if configured; otherwise SQLite (default) or in-memory fallback.\n\n**Config (env vars)**:\n- `MODEL_NAME` (default: `paraphrase-multilingual-MiniLM-L12-v2`)\n- `DUPLICATE_THRESHOLD` (default: `0.70`, range `0..1`)\n- `USE_SQLITE` (default: `true`)\n- `SQLITE_PATH` (default: `backend/duplidetect.sqlite`)\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/compare": {
+      "post": {
+        "tags": [
+          "Core"
+        ],
+        "summary": "Compare two texts",
+        "description": "Returns cosine similarity (0–100), duplicate verdict, duplicate type, and detected languages.",
+        "operationId": "compare_compare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompareResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search": {
+      "post": {
+        "tags": [
+          "Core"
+        ],
+        "summary": "Search similar records",
+        "description": "Find top similar stored records above the given threshold.",
+        "operationId": "search_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/add-record": {
+      "post": {
+        "tags": [
+          "Records"
+        ],
+        "summary": "Insert a record (with duplicate warning)",
+        "description": "Checks for a probable duplicate before inserting. If a match above the threshold exists, returns `inserted=false` with a warning and `top_match`.",
+        "operationId": "add_record_add_record_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddRecordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/add-records-bulk": {
+      "post": {
+        "tags": [
+          "Records"
+        ],
+        "summary": "Bulk insert records",
+        "description": "Bulk insert with duplicate detection against existing records and within the same upload. Returns per-item results and summary counts (added/duplicates/failed).",
+        "operationId": "add_records_bulk_add_records_bulk_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkAddRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkAddResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/records": {
+      "get": {
+        "tags": [
+          "Records"
+        ],
+        "summary": "List stored records",
+        "description": "Returns all records (id, text, language).",
+        "operationId": "list_records_records_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Record"
+                  },
+                  "type": "array",
+                  "title": "Response List Records Records Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/records/{record_id}": {
+      "delete": {
+        "tags": [
+          "Records"
+        ],
+        "summary": "Delete a record",
+        "description": "Deletes the record by id from the active storage backend.",
+        "operationId": "delete_record_records__record_id__delete",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddRecordRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Text to insert.",
+            "examples": [
+              "Login issue"
+            ]
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold",
+            "description": "Optional duplicate threshold override (0..1). If omitted, uses server default.",
+            "examples": [
+              0.7
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "AddRecordRequest",
+        "examples": [
+          {
+            "text": "Login issue",
+            "threshold": 0.7
+          },
+          {
+            "text": "ログインの問題"
+          }
+        ]
+      },
+      "AddRecordResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "inserted": {
+            "type": "boolean",
+            "title": "Inserted"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          },
+          "top_match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "language",
+          "inserted"
+        ],
+        "title": "AddRecordResponse",
+        "examples": [
+          {
+            "id": "new_id",
+            "inserted": true,
+            "language": "en",
+            "text": "Login issue"
+          },
+          {
+            "id": "",
+            "inserted": false,
+            "language": "en",
+            "text": "Login issue",
+            "top_match": {
+              "id": "abc1",
+              "language": "en",
+              "similarity": 91.2,
+              "text": "Cannot log in"
+            },
+            "warning": "Possible duplicate detected (similarity 91.2%)"
+          }
+        ]
+      },
+      "BulkAddRequest": {
+        "properties": {
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Texts",
+            "description": "List of texts to insert.",
+            "examples": [
+              [
+                "Login issue",
+                "Cannot log in",
+                "ログインの問題"
+              ]
+            ]
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold",
+            "description": "Duplicate threshold as ratio (0..1).",
+            "default": 0.7,
+            "examples": [
+              0.7
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "texts"
+        ],
+        "title": "BulkAddRequest",
+        "examples": [
+          {
+            "texts": [
+              "Login issue",
+              "Cannot log in",
+              "ログインの問題"
+            ],
+            "threshold": 0.7
+          }
+        ]
+      },
+      "BulkAddResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "added": {
+            "type": "integer",
+            "title": "Added"
+          },
+          "duplicates": {
+            "type": "integer",
+            "title": "Duplicates"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AddRecordResponse"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "added",
+          "duplicates",
+          "failed",
+          "results"
+        ],
+        "title": "BulkAddResponse",
+        "examples": [
+          {
+            "added": 2,
+            "duplicates": 1,
+            "failed": 0,
+            "results": [
+              {
+                "id": "id1",
+                "inserted": true,
+                "language": "en",
+                "text": "Login issue"
+              },
+              {
+                "id": "",
+                "inserted": false,
+                "language": "en",
+                "text": "Cannot log in",
+                "top_match": {
+                  "id": "id1",
+                  "language": "en",
+                  "similarity": 91.2,
+                  "text": "Login issue"
+                },
+                "warning": "Possible duplicate detected (similarity 91.2%)"
+              },
+              {
+                "id": "id2",
+                "inserted": true,
+                "language": "ja",
+                "text": "ログインの問題"
+              }
+            ],
+            "total": 3
+          }
+        ]
+      },
+      "CompareRequest": {
+        "properties": {
+          "text1": {
+            "type": "string",
+            "title": "Text1",
+            "description": "First input text.",
+            "examples": [
+              "Login issue"
+            ]
+          },
+          "text2": {
+            "type": "string",
+            "title": "Text2",
+            "description": "Second input text.",
+            "examples": [
+              "ログインの問題"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "text1",
+          "text2"
+        ],
+        "title": "CompareRequest",
+        "examples": [
+          {
+            "text1": "Login issue",
+            "text2": "ログインの問題"
+          },
+          {
+            "text1": "Payment failed",
+            "text2": "الدفع فشل"
+          }
+        ]
+      },
+      "CompareResponse": {
+        "properties": {
+          "text1": {
+            "type": "string",
+            "title": "Text1"
+          },
+          "text2": {
+            "type": "string",
+            "title": "Text2"
+          },
+          "similarity_score": {
+            "type": "number",
+            "title": "Similarity Score"
+          },
+          "is_duplicate": {
+            "type": "boolean",
+            "title": "Is Duplicate"
+          },
+          "duplicate_type": {
+            "type": "string",
+            "title": "Duplicate Type"
+          },
+          "lang1": {
+            "type": "string",
+            "title": "Lang1"
+          },
+          "lang2": {
+            "type": "string",
+            "title": "Lang2"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text1",
+          "text2",
+          "similarity_score",
+          "is_duplicate",
+          "duplicate_type",
+          "lang1",
+          "lang2"
+        ],
+        "title": "CompareResponse",
+        "examples": [
+          {
+            "duplicate_type": "language_difference",
+            "is_duplicate": true,
+            "lang1": "en",
+            "lang2": "ja",
+            "similarity_score": 93.91,
+            "text1": "Login issue",
+            "text2": "ログインの問題"
+          }
+        ]
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Record": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "language"
+        ],
+        "title": "Record",
+        "examples": [
+          {
+            "id": "abc1",
+            "language": "en",
+            "text": "Login issue"
+          }
+        ]
+      },
+      "SearchMatch": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "similarity": {
+            "type": "number",
+            "title": "Similarity"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "similarity",
+          "language"
+        ],
+        "title": "SearchMatch"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Search query text.",
+            "examples": [
+              "Login problem"
+            ]
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold",
+            "description": "Similarity threshold as a ratio (0..1).",
+            "default": 0.7,
+            "examples": [
+              0.7
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest",
+        "examples": [
+          {
+            "query": "Login problem",
+            "threshold": 0.7
+          },
+          {
+            "query": "Cannot sign in",
+            "threshold": 0.65
+          }
+        ]
+      },
+      "SearchResponse": {
+        "properties": {
+          "input": {
+            "type": "string",
+            "title": "Input"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/SearchMatch"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "input",
+          "matches"
+        ],
+        "title": "SearchResponse",
+        "examples": [
+          {
+            "input": "Login problem",
+            "matches": [
+              {
+                "id": "abc1",
+                "language": "en",
+                "similarity": 88.3,
+                "text": "Login issue"
+              },
+              {
+                "id": "abc2",
+                "language": "en",
+                "similarity": 81.4,
+                "text": "Cannot log in"
+              }
+            ]
+          }
+        ]
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Ops",
+      "description": "Health checks and operational endpoints."
+    },
+    {
+      "name": "Core",
+      "description": "Similarity, search, and duplicate detection."
+    },
+    {
+      "name": "Records",
+      "description": "CRUD operations for stored records."
+    }
+  ]
+}

@@ -15,7 +15,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded heavy dependencies
@@ -223,8 +223,22 @@ def classify_duplicate_type(text1: str, text2: str, sim_score: float) -> str:
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="DupliDetect API",
-    description="Multilingual duplicate detection using sentence-transformers",
+    description=(
+        "Multilingual duplicate detection using sentence-transformers.\n\n"
+        "**Core idea**: preprocess → embed → cosine similarity → classify duplicate type.\n\n"
+        "**Storage**: Firestore if configured; otherwise SQLite (default) or in-memory fallback.\n\n"
+        "**Config (env vars)**:\n"
+        "- `MODEL_NAME` (default: `paraphrase-multilingual-MiniLM-L12-v2`)\n"
+        "- `DUPLICATE_THRESHOLD` (default: `0.70`, range `0..1`)\n"
+        "- `USE_SQLITE` (default: `true`)\n"
+        "- `SQLITE_PATH` (default: `backend/duplidetect.sqlite`)\n"
+    ),
     version="1.0.0",
+    openapi_tags=[
+        {"name": "Ops", "description": "Health checks and operational endpoints."},
+        {"name": "Core", "description": "Similarity, search, and duplicate detection."},
+        {"name": "Records", "description": "CRUD operations for stored records."},
+    ],
 )
 
 app.add_middleware(
@@ -238,8 +252,17 @@ app.add_middleware(
 # Pydantic models
 # ---------------------------------------------------------------------------
 class CompareRequest(BaseModel):
-    text1: str
-    text2: str
+    text1: str = Field(..., description="First input text.", examples=["Login issue"])
+    text2: str = Field(..., description="Second input text.", examples=["ログインの問題"])
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"text1": "Login issue", "text2": "ログインの問題"},
+                {"text1": "Payment failed", "text2": "الدفع فشل"},
+            ]
+        }
+    }
 
 class CompareResponse(BaseModel):
     text1: str
@@ -250,9 +273,38 @@ class CompareResponse(BaseModel):
     lang1: str
     lang2: str
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "text1": "Login issue",
+                    "text2": "ログインの問題",
+                    "similarity_score": 93.91,
+                    "is_duplicate": True,
+                    "duplicate_type": "language_difference",
+                    "lang1": "en",
+                    "lang2": "ja",
+                }
+            ]
+        }
+    }
+
 class SearchRequest(BaseModel):
-    query: str
-    threshold: Optional[float] = DUPLICATE_THRESHOLD
+    query: str = Field(..., description="Search query text.", examples=["Login problem"])
+    threshold: Optional[float] = Field(
+        default=DUPLICATE_THRESHOLD,
+        description="Similarity threshold as a ratio (0..1).",
+        examples=[0.7],
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"query": "Login problem", "threshold": 0.7},
+                {"query": "Cannot sign in", "threshold": 0.65},
+            ]
+        }
+    }
 
 class SearchMatch(BaseModel):
     id: str
@@ -264,9 +316,36 @@ class SearchResponse(BaseModel):
     input: str
     matches: list[SearchMatch]
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "input": "Login problem",
+                    "matches": [
+                        {"id": "abc1", "text": "Login issue", "similarity": 88.3, "language": "en"},
+                        {"id": "abc2", "text": "Cannot log in", "similarity": 81.4, "language": "en"},
+                    ],
+                }
+            ]
+        }
+    }
+
 class AddRecordRequest(BaseModel):
-    text: str
-    threshold: Optional[float] = None
+    text: str = Field(..., description="Text to insert.", examples=["Login issue"])
+    threshold: Optional[float] = Field(
+        default=None,
+        description="Optional duplicate threshold override (0..1). If omitted, uses server default.",
+        examples=[0.7],
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"text": "Login issue", "threshold": 0.7},
+                {"text": "ログインの問題"},
+            ]
+        }
+    }
 
 class AddRecordResponse(BaseModel):
     id: str
@@ -276,14 +355,59 @@ class AddRecordResponse(BaseModel):
     warning: Optional[str] = None
     top_match: Optional[SearchMatch] = None
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "id": "new_id",
+                    "text": "Login issue",
+                    "language": "en",
+                    "inserted": True,
+                    "warning": None,
+                    "top_match": None,
+                },
+                {
+                    "id": "",
+                    "text": "Login issue",
+                    "language": "en",
+                    "inserted": False,
+                    "warning": "Possible duplicate detected (similarity 91.2%)",
+                    "top_match": {"id": "abc1", "text": "Cannot log in", "similarity": 91.2, "language": "en"},
+                },
+            ]
+        }
+    }
+
 class Record(BaseModel):
     id: str
     text: str
     language: str
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"id": "abc1", "text": "Login issue", "language": "en"}
+            ]
+        }
+    }
+
 class BulkAddRequest(BaseModel):
-    texts: list[str]
-    threshold: Optional[float] = DUPLICATE_THRESHOLD
+    texts: list[str] = Field(
+        ..., description="List of texts to insert.", examples=[["Login issue", "Cannot log in", "ログインの問題"]]
+    )
+    threshold: Optional[float] = Field(
+        default=DUPLICATE_THRESHOLD,
+        description="Duplicate threshold as ratio (0..1).",
+        examples=[0.7],
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"texts": ["Login issue", "Cannot log in", "ログインの問題"], "threshold": 0.7}
+            ]
+        }
+    }
 
 class BulkAddResponse(BaseModel):
     total: int
@@ -291,6 +415,31 @@ class BulkAddResponse(BaseModel):
     duplicates: int
     failed: int
     results: list[AddRecordResponse]
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "total": 3,
+                    "added": 2,
+                    "duplicates": 1,
+                    "failed": 0,
+                    "results": [
+                        {"id": "id1", "text": "Login issue", "language": "en", "inserted": True, "warning": None, "top_match": None},
+                        {
+                            "id": "",
+                            "text": "Cannot log in",
+                            "language": "en",
+                            "inserted": False,
+                            "warning": "Possible duplicate detected (similarity 91.2%)",
+                            "top_match": {"id": "id1", "text": "Login issue", "similarity": 91.2, "language": "en"},
+                        },
+                        {"id": "id2", "text": "ログインの問題", "language": "ja", "inserted": True, "warning": None, "top_match": None},
+                    ],
+                }
+            ]
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # In-memory fallback store when Firebase is unavailable
@@ -416,7 +565,13 @@ def health():
     }
 
 
-@app.post("/compare", response_model=CompareResponse)
+@app.post(
+    "/compare",
+    response_model=CompareResponse,
+    tags=["Core"],
+    summary="Compare two texts",
+    description="Returns cosine similarity (0–100), duplicate verdict, duplicate type, and detected languages.",
+)
 def compare(req: CompareRequest):
     if not req.text1.strip() or not req.text2.strip():
         raise HTTPException(400, "Both text1 and text2 must be non-empty")
@@ -437,7 +592,13 @@ def compare(req: CompareRequest):
     )
 
 
-@app.post("/search", response_model=SearchResponse)
+@app.post(
+    "/search",
+    response_model=SearchResponse,
+    tags=["Core"],
+    summary="Search similar records",
+    description="Find top similar stored records above the given threshold.",
+)
 def search(req: SearchRequest):
     if not req.query.strip():
         raise HTTPException(400, "Query must be non-empty")
@@ -460,7 +621,16 @@ def search(req: SearchRequest):
     return SearchResponse(input=req.query, matches=results[:10])
 
 
-@app.post("/add-record", response_model=AddRecordResponse)
+@app.post(
+    "/add-record",
+    response_model=AddRecordResponse,
+    tags=["Records"],
+    summary="Insert a record (with duplicate warning)",
+    description=(
+        "Checks for a probable duplicate before inserting. If a match above the threshold exists, "
+        "returns `inserted=false` with a warning and `top_match`."
+    ),
+)
 def add_record(req: AddRecordRequest):
     if not req.text.strip():
         raise HTTPException(400, "text must be non-empty")
@@ -500,7 +670,16 @@ def add_record(req: AddRecordRequest):
     return AddRecordResponse(id=rid, text=req.text, language=lang, inserted=True)
 
 
-@app.post("/add-records-bulk", response_model=BulkAddResponse)
+@app.post(
+    "/add-records-bulk",
+    response_model=BulkAddResponse,
+    tags=["Records"],
+    summary="Bulk insert records",
+    description=(
+        "Bulk insert with duplicate detection against existing records and within the same upload. "
+        "Returns per-item results and summary counts (added/duplicates/failed)."
+    ),
+)
 def add_records_bulk(req: BulkAddRequest):
     texts_in = [t for t in req.texts if isinstance(t, str) and t.strip()]
     threshold = req.threshold if req.threshold is not None else DUPLICATE_THRESHOLD
@@ -627,13 +806,24 @@ def add_records_bulk(req: BulkAddRequest):
     )
 
 
-@app.get("/records", response_model=list[Record])
+@app.get(
+    "/records",
+    response_model=list[Record],
+    tags=["Records"],
+    summary="List stored records",
+    description="Returns all records (id, text, language).",
+)
 def list_records():
     return [Record(id=r["id"], text=r["text"], language=r.get("language", "unknown"))
             for r in _all_records()]
 
 
-@app.delete("/records/{record_id}")
+@app.delete(
+    "/records/{record_id}",
+    tags=["Records"],
+    summary="Delete a record",
+    description="Deletes the record by id from the active storage backend.",
+)
 def delete_record(record_id: str):
     db = _get_db()
     if db:
