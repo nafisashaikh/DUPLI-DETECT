@@ -4,29 +4,24 @@ import { searchSimilar, addRecord, addRecordsBulkServerChunked, listRecords, del
 import type { SearchMatch, Record as DDRecord } from "@/lib/types";
 import { defaultThresholdPercent, defaultBulkChunkSize } from "@/lib/config";
 import Papa from "papaparse";
+import styles from "./search.module.css";
 
 function SimilarityBar({ value }: { value: number }) {
-  const color =
-    value >= 70 ? "var(--success)" :
-    value >= 50 ? "var(--warn)" :
-    "var(--accent)";
+  const tone = value >= 70 ? "success" : value >= 50 ? "warn" : "accent";
+  const progressToneClass =
+    tone === "success" ? styles.simSuccess :
+    tone === "warn" ? styles.simWarn :
+    styles.simAccent;
+  const textToneClass =
+    tone === "success" ? styles.simTextSuccess :
+    tone === "warn" ? styles.simTextWarn :
+    styles.simTextAccent;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div className="progress-bar" style={{ flex: 1 }}>
-        <div
-          className="progress-fill"
-          style={{
-            width: `${value}%`,
-            background: color,
-            height: "100%",
-            borderRadius: 99,
-            transition: "width 0.5s cubic-bezier(.34,1.56,.64,1)",
-          }}
-        />
+    <div className={styles.simRow}>
+      <div className={styles.simTrack}>
+        <progress className={`${styles.simProgress} ${progressToneClass}`} max={100} value={value} />
       </div>
-      <span style={{ fontSize: "0.8rem", fontWeight: 700, color, minWidth: 38, textAlign: "right" }}>
-        {value}%
-      </span>
+      <span className={`${styles.simLabel} ${textToneClass}`}>{value}%</span>
     </div>
   );
 }
@@ -214,43 +209,39 @@ export default function SearchPage() {
     }
   };
 
-  const msgColors = { success: "var(--success)", warn: "var(--warn)", error: "var(--danger)" };
+  const messageClass = (type: "success" | "warn" | "error") =>
+    type === "success" ? styles.msgSuccess : type === "warn" ? styles.msgWarn : styles.msgError;
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px 80px" }}>
-      <div className="animate-fade-up" style={{ marginBottom: 36 }}>
-        <p className="section-label" style={{ marginBottom: 8 }}>Feature 4</p>
-        <h1 style={{ fontSize: "clamp(1.6rem,4vw,2.4rem)", marginBottom: 8 }}>Real-Time Search</h1>
-        <p style={{ color: "var(--text-secondary)" }}>
+    <div className={styles.container}>
+      <div className={`animate-fade-up ${styles.header}`}>
+        <p className={`section-label ${styles.headerLabel}`}>Feature 4</p>
+        <h1 className={styles.headerTitle}>Real-Time Search</h1>
+        <p className={styles.headerSubtitle}>
           Type anything — the system instantly surfaces similar records above your threshold and warns you before inserting duplicates.
         </p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24, alignItems: "start" }}>
+      <div className={styles.grid}>
         {/* ── Left column ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div className={styles.leftCol}>
 
           {/* Search box */}
-          <div className="card" style={{ padding: 24 }}>
-            <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: 8 }}>
+          <div className={`card ${styles.cardPad24}`}>
+            <label className={styles.searchLabel} htmlFor="search-input">
               Search Query
             </label>
-            <div style={{ position: "relative" }}>
+            <div className={styles.relative}>
               <input
                 id="search-input"
-                className="input"
+                className={`input ${styles.searchInput}`}
                 placeholder="Start typing… (e.g. Login problem)"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                style={{ paddingRight: 44 }}
               />
               {searching && (
                 <span
-                  className="animate-spin"
-                  style={{
-                    position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)",
-                    fontSize: 16, display: "inline-block", color: "var(--accent)",
-                  }}
+                  className={`animate-spin ${styles.spinner}`}
                 >
                   ⟳
                 </span>
@@ -258,26 +249,28 @@ export default function SearchPage() {
             </div>
 
             {/* Threshold slider */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 6 }}>
+            <div className={styles.sliderWrap}>
+              <div className={styles.sliderMeta}>
                 <span>Similarity threshold</span>
-                <span style={{ color: "var(--accent)", fontWeight: 700 }}>{threshold}%</span>
+                <span className={styles.sliderValue}>{threshold}%</span>
               </div>
               <input
                 type="range"
                 min={10} max={99} step={1}
                 value={threshold}
                 onChange={(e) => setThreshold(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--accent)" }}
+                className={styles.range}
+                aria-label="Similarity threshold"
+                title="Similarity threshold"
               />
             </div>
           </div>
 
           {/* Matches */}
           {query.trim() && (
-            <div className="card animate-fade-up" style={{ padding: 24 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h3 style={{ fontSize: "1rem" }}>
+            <div className={`card animate-fade-up ${styles.matchesCard}`}>
+              <div className={styles.matchesHeader}>
+                <h3 className={styles.matchesTitle}>
                   {matches.length > 0 ? `${matches.length} match${matches.length > 1 ? "es" : ""} found` : "No matches above threshold"}
                 </h3>
                 {matches.length > 0 && (
@@ -286,26 +279,21 @@ export default function SearchPage() {
               </div>
 
               {matches.length === 0 && !searching && (
-                <div style={{ textAlign: "center", padding: "24px 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                <div className={styles.noMatches}>
                   🎉 No matches — record appears to be unique
                 </div>
               )}
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className={styles.matchList}>
                 {matches.map((m) => (
                   <div
                     key={m.id}
-                    style={{
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 10,
-                      padding: "14px 16px",
-                    }}
+                    className={styles.matchItem}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div className={styles.matchTop}>
+                      <div className={styles.matchTextRow}>
                         <LanguageFlag lang={m.language} />
-                        <span style={{ fontSize: "0.95rem", color: "var(--text-primary)" }}>{m.text}</span>
+                        <span className={styles.matchText}>{m.text}</span>
                       </div>
                       <span className="badge badge-info">{m.language}</span>
                     </div>
@@ -316,20 +304,10 @@ export default function SearchPage() {
 
               {/* JSON output */}
               {matches.length > 0 && (
-                <details style={{ marginTop: 16, fontSize: "0.8rem" }}>
-                  <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>API response</summary>
+                <details className={styles.details}>
+                  <summary className={styles.summary}>API response</summary>
                   <pre
-                    className="mono"
-                    style={{
-                      background: "rgba(0,0,0,0.3)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      padding: 12,
-                      overflowX: "auto",
-                      color: "var(--accent-3)",
-                      fontSize: "0.77rem",
-                      marginTop: 8,
-                    }}
+                    className={`mono ${styles.pre}`}
                   >
                     {JSON.stringify({ input: query, matches }, null, 2)}
                   </pre>
@@ -339,54 +317,45 @@ export default function SearchPage() {
           )}
 
           {/* Add record */}
-          <div className="card" style={{ padding: 24 }}>
-            <h3 style={{ fontSize: "1rem", marginBottom: 14 }}>Add New Record</h3>
-            <div style={{ display: "flex", gap: 10 }}>
+          <div className={`card ${styles.cardPad24}`}>
+            <h3 className={styles.addTitle}>Add New Record</h3>
+            <div className={styles.addRow}>
               <input
                 id="add-record-input"
-                className="input"
+                className={`input ${styles.addInput}`}
                 placeholder="New record text…"
                 value={addText}
                 onChange={(e) => setAddText(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                style={{ flex: 1 }}
+                aria-label="New record text"
               />
               <button
                 id="add-record-btn"
-                className="btn btn-primary"
+                className={`btn btn-primary ${styles.nowrap}`}
                 onClick={handleAdd}
                 disabled={adding || !addText.trim()}
-                style={{ whiteSpace: "nowrap" }}
               >
                 {adding ? "…" : "+ Add"}
               </button>
             </div>
             {addMsg && (
               <div
-                style={{
-                  marginTop: 12,
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  background: `${msgColors[addMsg.type]}18`,
-                  border: `1px solid ${msgColors[addMsg.type]}33`,
-                  color: msgColors[addMsg.type],
-                  fontSize: "0.85rem",
-                }}
+                className={`${styles.msgBox} ${messageClass(addMsg.type)}`}
               >
                 {addMsg.text}
               </div>
             )}
 
-            <div className="divider" style={{ margin: "18px 0" }} />
+            <div className={`divider ${styles.divider}`} />
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div className={styles.csvRow}>
               <div>
-                <p className="section-label" style={{ marginBottom: 4 }}>CSV Upload</p>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                <p className={`section-label ${styles.csvLabel}`}>CSV Upload</p>
+                <p className={styles.csvHint}>
                   Upload a CSV with a <span className="mono">text</span> column (or use the first column).
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div className={styles.csvControls}>
                 <input
                   ref={csvInputRef}
                   type="file"
@@ -395,7 +364,8 @@ export default function SearchPage() {
                     const f = e.target.files?.[0];
                     if (f) handleCsvUpload(f);
                   }}
-                  style={{ display: "none" }}
+                  className={styles.hiddenFile}
+                  aria-label="Upload CSV file"
                 />
                 <button
                   className="btn btn-ghost"
@@ -409,39 +379,27 @@ export default function SearchPage() {
             </div>
 
             {csvProgress && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: 6 }}>
+              <div className={styles.progressBlock}>
+                <div className={styles.progressMeta}>
                   <span>Progress</span>
-                  <span style={{ color: "var(--accent)", fontWeight: 700 }}>{csvProgress.done}/{csvProgress.total}</span>
+                  <span className={styles.progressValue}>{csvProgress.done}/{csvProgress.total}</span>
                 </div>
-                <div className="progress-bar">
-                  <div
-                    className="progress-fill"
-                    style={{
-                      width: `${csvProgress.total > 0 ? Math.round((csvProgress.done / csvProgress.total) * 100) : 0}%`,
-                      background: "var(--accent)",
-                    }}
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10, fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                  <span>Added: <span style={{ color: "var(--success)", fontWeight: 700 }}>{csvProgress.added}</span></span>
-                  <span>Duplicates: <span style={{ color: "var(--warn)", fontWeight: 700 }}>{csvProgress.duplicates}</span></span>
-                  <span>Failed: <span style={{ color: "var(--danger)", fontWeight: 700 }}>{csvProgress.failed}</span></span>
+                <progress
+                  className={styles.progress}
+                  max={Math.max(csvProgress.total, 1)}
+                  value={Math.min(csvProgress.done, Math.max(csvProgress.total, 1))}
+                />
+                <div className={styles.progressStats}>
+                  <span>Added: <span className={styles.statSuccess}>{csvProgress.added}</span></span>
+                  <span>Duplicates: <span className={styles.statWarn}>{csvProgress.duplicates}</span></span>
+                  <span>Failed: <span className={styles.statDanger}>{csvProgress.failed}</span></span>
                 </div>
               </div>
             )}
 
             {csvMsg && (
               <div
-                style={{
-                  marginTop: 12,
-                  padding: "10px 14px",
-                  borderRadius: 8,
-                  background: `${msgColors[csvMsg.type]}18`,
-                  border: `1px solid ${msgColors[csvMsg.type]}33`,
-                  color: msgColors[csvMsg.type],
-                  fontSize: "0.85rem",
-                }}
+                className={`${styles.msgBox} ${messageClass(csvMsg.type)}`}
               >
                 {csvMsg.text}
               </div>
@@ -450,50 +408,34 @@ export default function SearchPage() {
         </div>
 
         {/* ── Right column — record list ── */}
-        <div className="card" style={{ padding: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <h3 style={{ fontSize: "0.95rem" }}>Dataset ({records.length})</h3>
-            <button className="btn btn-ghost" style={{ padding: "5px 12px", fontSize: "0.75rem" }} onClick={fetchRecords}>
+        <div className={`card ${styles.rightCard}`}>
+          <div className={styles.rightHeader}>
+            <h3 className={styles.rightTitle}>Dataset ({records.length})</h3>
+            <button className={`btn btn-ghost ${styles.refreshBtn}`} onClick={fetchRecords}>
               ↻ Refresh
             </button>
           </div>
 
           {records.length === 0 ? (
-            <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "16px 0", textAlign: "center" }}>
+            <div className={styles.emptyRight}>
               No records yet — add one above
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 520, overflowY: "auto" }}>
+            <div className={styles.recordList}>
               {records.map((r) => (
                 <div
                   key={r.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    gap: 8,
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background: "rgba(255,255,255,0.03)",
-                    border: "1px solid var(--border)",
-                  }}
+                  className={styles.recordRow}
                 >
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: "0.875rem" }}>{r.text}</span>
-                    <span className="badge badge-info" style={{ alignSelf: "flex-start" }}>{r.language}</span>
+                  <div className={styles.recordLeft}>
+                    <span className={styles.recordText}>{r.text}</span>
+                    <span className={`badge badge-info ${styles.badgeSelf}`}>{r.language}</span>
                   </div>
                   <button
                     onClick={() => handleDelete(r.id)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      color: "var(--text-muted)",
-                      fontSize: "1rem",
-                      padding: "2px 4px",
-                      flexShrink: 0,
-                    }}
+                    className={styles.deleteBtn}
                     title="Delete"
+                    aria-label="Delete record"
                   >
                     ✕
                   </button>
@@ -503,12 +445,6 @@ export default function SearchPage() {
           )}
         </div>
       </div>
-
-      <style>{`
-        @media(max-width:768px) {
-          div[style*="1fr 360px"] { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
     </div>
   );
 }

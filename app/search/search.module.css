@@ -1,0 +1,418 @@
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.header {
+  margin-bottom: 36px;
+}
+
+.headerLabel {
+  margin-bottom: 8px;
+}
+
+.headerTitle {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  margin-bottom: 8px;
+}
+
+.headerSubtitle {
+  color: var(--text-secondary);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cardPad24 {
+  padding: 24px;
+}
+
+.searchLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: 8px;
+}
+
+.relative {
+  position: relative;
+}
+
+.searchInput {
+  padding-right: 44px;
+}
+
+.spinner {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  display: inline-block;
+  color: var(--accent);
+}
+
+.sliderWrap {
+  margin-top: 14px;
+}
+
+.sliderMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.sliderValue {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.matchesCard {
+  padding: 24px;
+}
+
+.matchesHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.matchesTitle {
+  font-size: 1rem;
+}
+
+.noMatches {
+  text-align: center;
+  padding: 24px 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.matchList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.matchItem {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.matchTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.matchTextRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.matchText {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.details {
+  margin-top: 16px;
+  font-size: 0.8rem;
+}
+
+.summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.pre {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  color: var(--accent-3);
+  font-size: 0.77rem;
+  margin-top: 8px;
+}
+
+.addTitle {
+  font-size: 1rem;
+  margin-bottom: 14px;
+}
+
+.addRow {
+  display: flex;
+  gap: 10px;
+}
+
+.addInput {
+  flex: 1;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.divider {
+  margin: 18px 0;
+}
+
+.csvRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.csvLabel {
+  margin-bottom: 4px;
+}
+
+.csvHint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.csvControls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.hiddenFile {
+  display: none;
+}
+
+.progressBlock {
+  margin-top: 12px;
+}
+
+.progressMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.progressValue {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.progress {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.progress::-webkit-progress-bar {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.progress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.progressStats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.statSuccess {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.statWarn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.statDanger {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.msgBox {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.msgSuccess {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+}
+
+.msgWarn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+}
+
+.msgError {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent);
+  color: var(--danger);
+}
+
+.rightCard {
+  padding: 20px;
+}
+
+.rightHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.rightTitle {
+  font-size: 0.95rem;
+}
+
+.refreshBtn {
+  padding: 5px 12px;
+  font-size: 0.75rem;
+}
+
+.emptyRight {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.recordList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.recordRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+}
+
+.recordLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recordText {
+  font-size: 0.875rem;
+}
+
+.badgeSelf {
+  align-self: flex-start;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 1rem;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+
+/* SimilarityBar */
+.simRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.simLabel {
+  font-size: 0.8rem;
+  font-weight: 700;
+  min-width: 38px;
+  text-align: right;
+}
+
+.simTrack {
+  flex: 1;
+}
+
+.simProgress {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.simProgress::-webkit-progress-bar {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.simProgress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.simAccent::-webkit-progress-value { background: var(--accent); }
+.simWarn::-webkit-progress-value { background: var(--warn); }
+.simSuccess::-webkit-progress-value { background: var(--success); }
+
+.simAccent::-moz-progress-bar { background: var(--accent); }
+.simWarn::-moz-progress-bar { background: var(--warn); }
+.simSuccess::-moz-progress-bar { background: var(--success); }
+
+.simTextAccent { color: var(--accent); }
+.simTextWarn { color: var(--warn); }
+.simTextSuccess { color: var(--success); }
