@@ -1,6 +1,6 @@
 # DUPLI-DETECT — Multilingual Duplicate Detection
 
-Complete full-stack system for detecting duplicate records in multilingual datasets (English, Japanese, Chinese, Thai, Bahasa, Arabic, etc.).
+Complete full-stack system for detecting duplicate records in multilingual datasets (English, Japanese, Chinese, Thai, Bahasa, Arabic, etc.). Now includes PDF OCR processing with NVIDIA Nemotron-OCR-v1 for automated bill processing and deduplication.
 
 ## Stack
 
@@ -8,6 +8,7 @@ Complete full-stack system for detecting duplicate records in multilingual datas
 - Backend: FastAPI (Python)
 - DB: Firebase Firestore (with in-memory fallback for local testing)
 - NLP model: sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`
+- OCR: NVIDIA Nemotron-OCR-v1 (with mock fallback for testing)
 
 ## Configuration (No Hard-Coding)
 
@@ -17,6 +18,7 @@ Backend (environment variables):
 - `DUPLICATE_THRESHOLD` (default: `0.70`, range `0..1`)
 - `USE_SQLITE` (default: `true`) — enables persistent local storage when Firebase is not configured
 - `SQLITE_PATH` (default: `backend/duplidetect.sqlite`) — path to the SQLite database file
+- `NVIDIA_API_KEY` — API key for NVIDIA Nemotron-OCR-v1 (optional, uses mock data if not set)
 
 Frontend (environment variables):
 
@@ -66,6 +68,14 @@ Tip: copy `.env.example` → `.env.local` for local overrides.
 - Edges = similarity links
 - Duplicate clusters grouped by color
 
+### 6) PDF OCR Processing (New)
+
+- Upload PDF bills and invoices
+- NVIDIA Nemotron-OCR-v1 extracts text automatically
+- Converts extracted text to CSV format
+- Applies deduplication against existing records
+- Displays results on dashboard
+
 ## Folder Structure
 
 ```text
@@ -73,12 +83,13 @@ dupli-detect/
   app/
     compare/page.tsx      # Compare 2 records
     search/page.tsx       # Real-time search + add-record warning
+    upload/page.tsx       # PDF OCR processing + deduplication
     dashboard/page.tsx    # Graph visualization
     layout.tsx
     page.tsx
     globals.css
   backend/
-    main.py               # FastAPI endpoints + NLP + Firestore integration
+    main.py               # FastAPI endpoints + NLP + Firestore integration + OCR
     requirements.txt
   components/
     Navbar.tsx
@@ -181,6 +192,38 @@ Insert success response:
 }
 ```
 
+### POST `/process-pdf`
+
+Upload a PDF file for OCR processing, text extraction, CSV conversion, and deduplication.
+
+Request: `multipart/form-data`
+- `file`: PDF file (max 10MB)
+- `deduplicate`: boolean (query param, default: true)
+- `threshold`: float (query param, default: 0.7)
+
+Response:
+
+```json
+{
+  "filename": "invoice.pdf",
+  "extracted_text": "INVOICE #12345\nDate: 2024-01-15\n...",
+  "csv_data": "Item,Description,Amount\n\"Item_1\",\"INVOICE #12345\",\"\"\n...",
+  "processed_records": 5,
+  "duplicates_found": 1,
+  "records_added": 4,
+  "results": [
+    {
+      "id": "rec1",
+      "text": "INVOICE #12345",
+      "language": "en",
+      "inserted": true,
+      "warning": null,
+      "top_match": null
+    }
+  ]
+}
+```
+
 ## Firestore Schema
 
 Collection: `records`
@@ -236,6 +279,8 @@ $env:FIREBASE_CREDENTIALS="C:\path\to\firebase-credentials.json"
 - Language detection is best-effort (`langdetect`) and deterministic seed is enabled.
 - Duplicate threshold default is `0.70`.
 - Embedding model loads lazily on first request.
+- PDF OCR processing uses NVIDIA Nemotron-OCR-v1 when API key is configured, otherwise provides mock data for testing.
+- Supported PDF formats: any PDF with text content (scanned documents may require proper OCR preprocessing).
 
 ## Evaluation (PS Submission Helper)
 

@@ -35,6 +35,9 @@ export interface Record {
   id: string;
   text: string;
   language: string;
+  item?: string;
+  description?: string;
+  amount?: string;
 }
 
 export interface BulkAddResponse {

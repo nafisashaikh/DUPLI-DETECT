@@ -59,6 +59,11 @@
   flex: 1;
 }
 
+.controlsRight {
+  display: flex;
+  gap: 8px;
+}
+
 .controlsMeta {
   display: flex;
   justify-content: space-between;
@@ -78,6 +83,11 @@
 }
 
 .rebuildButton {
+  padding: 9px 18px;
+  white-space: nowrap;
+}
+
+.downloadButton {
   padding: 9px 18px;
   white-space: nowrap;
 }
@@ -167,6 +177,16 @@
 
 .selectedTitle {
   font-size: 1.1rem;
+}
+
+.recordDetails {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.recordDetails div {
+  margin-bottom: 4px;
 }
 
 .selectedBadges {

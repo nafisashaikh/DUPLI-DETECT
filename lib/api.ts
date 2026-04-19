@@ -156,6 +156,51 @@ export function listRecords(): Promise<DDRecord[]> {
   return api<DDRecord[]>("/records");
 }
 
+export async function exportCSV(): Promise<string> {
+  const res = await fetch(`${BASE}/export-csv`);
+  if (!res.ok) {
+    throw new Error(`API /export-csv: ${res.status} — ${await res.text()}`);
+  }
+  return res.text();
+}
+
 export function deleteRecord(id: string): Promise<{ deleted: string }> {
   return api<{ deleted: string }>(`/records/${id}`, { method: "DELETE" });
+}
+
+export interface PDFProcessResult {
+  filename: string;
+  extracted_text: string;
+  csv_data: string;
+  processed_records: number;
+  duplicates_found: number;
+  records_added: number;
+  results: AddRecordResponse[];
+}
+
+export async function processPDF(
+  file: File,
+  options?: { deduplicate?: boolean; threshold?: number }
+): Promise<PDFProcessResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  // Add query parameters
+  const params = new URLSearchParams();
+  if (options?.deduplicate !== undefined) {
+    params.append('deduplicate', options.deduplicate.toString());
+  }
+  if (options?.threshold !== undefined) {
+    params.append('threshold', options.threshold.toString());
+  }
+
+  const url = params.toString() ? `/process-pdf?${params.toString()}` : '/process-pdf';
+
+  return api<PDFProcessResult>(url, {
+    method: 'POST',
+    body: formData,
+    headers: {
+      // Don't set Content-Type, let the browser set it with boundary for FormData
+    },
+  });
 }

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { searchSimilar, listRecords } from "@/lib/api";
+import { searchSimilar, listRecords, exportCSV } from "@/lib/api";
 import type { Record as DDRecord, SearchMatch } from "@/lib/types";
 import styles from "./dashboard.module.css";
 
@@ -304,13 +304,34 @@ export default function DashboardPage() {
               title="Edge threshold"
             />
           </div>
-          <button
-            className={`btn btn-primary ${styles.rebuildButton}`}
-            onClick={() => buildGraph(records, threshold)}
-            disabled={loading}
-          >
-            {loading ? "…" : "↻ Rebuild"}
-          </button>
+          <div className={styles.controlsRight}>
+            <button
+              className={`btn btn-secondary ${styles.downloadButton}`}
+              onClick={async () => {
+                try {
+                  const csv = await exportCSV();
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'records.csv';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (e) {
+                  alert('Failed to download CSV: ' + (e instanceof Error ? e.message : String(e)));
+                }
+              }}
+            >
+              📥 Download CSV
+            </button>
+            <button
+              className={`btn btn-primary ${styles.rebuildButton}`}
+              onClick={() => buildGraph(records, threshold)}
+              disabled={loading}
+            >
+              {loading ? "…" : "↻ Rebuild"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -364,6 +385,13 @@ export default function DashboardPage() {
             <div>
               <p className="section-label">Selected Record</p>
               <h3 className={styles.selectedTitle}>{selected.text}</h3>
+              {(selected.item || selected.description || selected.amount) && (
+                <div className={styles.recordDetails}>
+                  {selected.item && <div><strong>Item:</strong> {selected.item}</div>}
+                  {selected.description && <div><strong>Description:</strong> {selected.description}</div>}
+                  {selected.amount && <div><strong>Amount:</strong> {selected.amount}</div>}
+                </div>
+              )}
               <div className={styles.selectedBadges}>
                 <span className="badge badge-info">{selected.language}</span>
                 <span className={`badge ${styles.clusterBadge} ${clusterClass(selected.group)}`}>
