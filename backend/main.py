@@ -26,7 +26,13 @@ backend_env = os.path.join(os.path.dirname(__file__), ".env.local")
 if os.path.exists(backend_env):
     load_dotenv(backend_env, override=True)
 
-from concept import ConceptMatcher, get_concept_score as concept_similarity
+# Try AI-powered concept matcher first, fallback to static concept map
+try:
+    from concept_ai import AIConceptMatcher, get_concept_score as concept_similarity
+    print("✅ Using AI-powered Brain 3 (concept_ai.py)")
+except ImportError:
+    from concept import ConceptMatcher, get_concept_score as concept_similarity
+    print("⚠️  Using fallback Brain 3 (concept.py - static concept map)")
 from phonetic import get_phonetic_similarity as phonetic_similarity
 
 import numpy as np
@@ -776,8 +782,17 @@ async def lifespan(app: FastAPI):
         logger.info("Model pre-warmed and ready")
     except Exception as e:
         logger.warning(f"Model pre-warm failed: {e}")
-    app.state.concept_matcher = ConceptMatcher()
-    print("DupliDetect backend ready: model and ConceptMatcher loaded")
+    
+    # Use AI-powered concept matcher if available, fallback to static one
+    try:
+        app.state.concept_matcher = AIConceptMatcher()
+        print("🧠 Brain 3: AI-powered concept matcher loaded (universal, no hardcoded data)")
+    except Exception as e:
+        print(f"⚠️  AI concept matcher failed to load: {e}")
+        print("   Falling back to static concept map")
+        app.state.concept_matcher = ConceptMatcher()
+    
+    print("✅ DupliDetect backend ready: All 3 brains loaded")
     yield
 
 app = FastAPI(
