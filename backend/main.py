@@ -18,10 +18,11 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env or .env.local
 load_dotenv()  # looks for .env
-load_dotenv(".env.local")  # also load .env.local if it exists
+# Ensure local overrides win over generic .env values.
+load_dotenv(".env.local", override=True)  # also load .env.local if it exists
 backend_env = os.path.join(os.path.dirname(__file__), ".env.local")
 if os.path.exists(backend_env):
-    load_dotenv(backend_env)
+    load_dotenv(backend_env, override=True)
 
 from concept import ConceptMatcher, get_concept_score as concept_similarity
 from phonetic import get_phonetic_similarity as phonetic_similarity
@@ -32,20 +33,55 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# New imports for PDF and OCR processing
+# Optional imports for PDF/OCR processing
 try:
     import requests
+except ImportError as e:
+    print(f"Warning: requests not available: {e}")
+    requests = None
+
+try:
     import pandas as pd
+except ImportError as e:
+    print(f"Warning: pandas not available: {e}")
+    pd = None
+
+try:
     from PIL import Image
-    import io
+except ImportError as e:
+    print(f"Warning: pillow not available: {e}")
+    Image = None
+
+try:
     import base64
 except ImportError as e:
-    print(f"Warning: Some PDF processing dependencies not available: {e}")
-    requests = None
-    pd = None
-    Image = None
-    io = None
+    print(f"Warning: base64 not available: {e}")
     base64 = None
+
+try:
+    from pypdf import PdfReader
+except ImportError as e:
+    print(f"Warning: pypdf not available: {e}")
+    PdfReader = None
+
+if PdfReader is None:
+    try:
+        from PyPDF2 import PdfReader as PyPdf2Reader
+        PdfReader = PyPdf2Reader
+    except ImportError as e:
+        print(f"Warning: PyPDF2 not available: {e}")
+
+try:
+    import fitz  # PyMuPDF
+except ImportError as e:
+    print(f"Warning: pymupdf not available: {e}")
+    fitz = None
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+except ImportError as e:
+    print(f"Warning: rapidocr-onnxruntime not available: {e}")
+    RapidOCR = None
 
 # Clustering imports
 try:
@@ -72,6 +108,7 @@ _emb_index_ids: list[str] = []
 _emb_index_texts: list[str] = []
 _emb_index_langs: list[str] = []
 _emb_index_mat: Optional[np.ndarray] = None  # shape (N, D), float32
+_rapid_ocr_engine = None
 
 def _get_emb_dim() -> int:
     global _emb_dim
@@ -121,7 +158,24 @@ DEFAULT_THRESHOLD = float(os.getenv("THRESHOLD", "0.75"))
 
 # NVIDIA API configuration
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
-NVIDIA_OCR_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_OCR_MODEL = os.environ.get("NVIDIA_OCR_MODEL", "nvidia/nemotron-ocr-v1")
+NVIDIA_OCR_BASE_URL = (os.environ.get("NVIDIA_OCR_BASE_URL", "https://integrate.api.nvidia.com") or "").strip().rstrip("/")
+
+def _build_nvidia_ocr_urls(base_url: str) -> tuple[str, str]:
+    """
+    Build infer/chat URLs while avoiding malformed paths like /v1/v1/infer.
+    Accepts either:
+    - https://host
+    - https://host/v1
+    """
+    if base_url.endswith("/v1"):
+        api_root = base_url
+    else:
+        api_root = f"{base_url}/v1"
+    return f"{api_root}/infer", f"{api_root}/chat/completions"
+
+# Nemotron OCR uses /infer. We keep chat-completions as a compatibility fallback.
+NVIDIA_OCR_INFER_URL, NVIDIA_OCR_CHAT_URL = _build_nvidia_ocr_urls(NVIDIA_OCR_BASE_URL)
 
 # Configure basic logging for the backend
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -225,9 +279,160 @@ def preprocess(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text
 
+def _extract_ocr_text_from_response(result: Any) -> str:
+    """Best-effort extractor that supports both infer and chat response shapes."""
+    if not isinstance(result, dict):
+        return ""
+
+    # OpenAI/chat-completions shape
+    try:
+        chat_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if isinstance(chat_text, str) and chat_text.strip():
+            return chat_text
+    except Exception:
+        pass
+
+    # Common OCR infer shapes
+    for key in ("text", "content", "output_text", "markdown"):
+        val = result.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+
+    # Walk nested payloads for textual content
+    def collect_text(node: Any) -> list[str]:
+        out: list[str] = []
+        if isinstance(node, str):
+            if node.strip():
+                out.append(node)
+            return out
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in {"text", "content", "markdown"} and isinstance(v, str) and v.strip():
+                    out.append(v)
+                else:
+                    out.extend(collect_text(v))
+            return out
+        if isinstance(node, list):
+            for item in node:
+                out.extend(collect_text(item))
+            return out
+        return out
+
+    parts = collect_text(result.get("data", result))
+    return "\n".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
+
+
+def _extract_text_locally(file_content: bytes, filename: str | None = None) -> str:
+    """
+    Local fallback when remote OCR API is unavailable.
+    Currently supports text extraction from PDF files.
+    """
+    fn = (filename or "").lower()
+    if fn.endswith(".pdf") and PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(file_content))
+            pages: list[str] = []
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                if text.strip():
+                    pages.append(text.strip())
+            extracted = "\n\n".join(pages).strip()
+            if extracted:
+                return extracted
+        except Exception as exc:
+            logging.warning("Local PDF extraction failed: %s", exc)
+    # Fall through to OCR fallback for scanned PDFs and image uploads.
+
+    try:
+        return _extract_text_with_local_ocr(file_content, filename)
+    except Exception as exc:
+        logging.warning("Local OCR fallback failed: %s", exc)
+        return ""
+
+
+def _get_rapid_ocr_engine():
+    global RapidOCR
+    global _rapid_ocr_engine
+    if RapidOCR is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR as _RapidOCR
+            RapidOCR = _RapidOCR
+        except Exception as exc:
+            logging.warning("RapidOCR import failed at runtime: %s", exc)
+            return None
+    if RapidOCR is None:
+        return None
+    if _rapid_ocr_engine is None:
+        _rapid_ocr_engine = RapidOCR()
+    return _rapid_ocr_engine
+
+
+def _extract_text_with_local_ocr(file_content: bytes, filename: str | None = None) -> str:
+    """
+    OCR fallback for scanned PDFs and image uploads using RapidOCR + PyMuPDF.
+    """
+    engine = _get_rapid_ocr_engine()
+    if engine is None:
+        return ""
+
+    fn = (filename or "").lower()
+    lines: list[str] = []
+
+    def collect_from_image_bytes(img_bytes: bytes):
+        result, _ = engine(img_bytes)
+        if not result:
+            return
+        for item in result:
+            # item shape: [box, text, score]
+            if len(item) >= 2 and isinstance(item[1], str) and item[1].strip():
+                lines.append(item[1].strip())
+
+    if fn.endswith(".pdf"):
+        global fitz
+        if fitz is None:
+            try:
+                import fitz as _fitz
+                fitz = _fitz
+            except Exception as exc:
+                logging.warning("PyMuPDF import failed at runtime: %s", exc)
+                return ""
+        if fitz is None:
+            return ""
+        doc = fitz.open(stream=file_content, filetype="pdf")
+        for page in doc:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            collect_from_image_bytes(pix.tobytes("png"))
+    else:
+        collect_from_image_bytes(file_content)
+
+    return "\n".join(lines).strip()
+
+
+def _safe_fallback_text(filename: str | None = None) -> str:
+    """
+    Last-resort text fallback to keep upload flow alive even when OCR is unavailable.
+    """
+    name = filename or "uploaded_document"
+    return (
+        f"DOCUMENT_PLACEHOLDER {name}\n"
+        "OCR service unavailable and no extractable embedded PDF text found.\n"
+        "Please verify NVIDIA OCR access or upload a text-based PDF."
+    )
+
+
+def _is_placeholder_text(text: str) -> bool:
+    t = (text or "").strip()
+    return t.startswith("DOCUMENT_PLACEHOLDER")
+
+
 def process_pdf_with_ocr(file_content: bytes, filename: str | None = None) -> str:
     if not requests or not base64:
-        raise HTTPException(500, "PDF processing dependencies not available")
+        local_text = _extract_text_locally(file_content, filename)
+        if local_text:
+            logging.info("Remote OCR dependencies unavailable; using local PDF extraction fallback")
+            return local_text
+        logging.warning("OCR dependencies unavailable and local extraction failed; using placeholder text")
+        return _safe_fallback_text(filename)
 
     if not NVIDIA_API_KEY:
         # Mock response for testing when API key is not set
@@ -249,29 +454,38 @@ def process_pdf_with_ocr(file_content: bytes, filename: str | None = None) -> st
 
         data_uri = f"data:{mime};base64,{b64}"
 
-        # Prepare the request payload using standard multi-modal format for NIMs
-        payload = {
-            "model": "nvidia/nemotron-ocr-v1",
+        infer_payload = {
+            "model": NVIDIA_OCR_MODEL,
+            "input": [
+                {
+                    "type": "image_url",
+                    "url": data_uri,
+                }
+            ],
+        }
+
+        chat_payload = {
+            "model": NVIDIA_OCR_MODEL,
             "messages": [
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "text", 
-                            "text": "Extract all text from this document and return it as structured data. If there are tables, extract them as CSV format. Return the extracted text and any tabular data found."
+                            "type": "text",
+                            "text": "Extract all text from this document. Preserve line breaks and return plain text only.",
                         },
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": data_uri
-                            }
-                        }
-                    ]
+                            },
+                        },
+                    ],
                 }
             ],
             "max_tokens": 1024,
             "temperature": 0.1,
-            "stream": False
+            "stream": False,
         }
 
         headers = {
@@ -279,25 +493,44 @@ def process_pdf_with_ocr(file_content: bytes, filename: str | None = None) -> st
             "Content-Type": "application/json"
         }
 
-        # Increased timeout to 60s for complex PDF/OCR tasks
-        logging.info("Sending request to NVIDIA OCR API...")
-        response = requests.post(NVIDIA_OCR_URL, json=payload, headers=headers, timeout=60)
-        
+        # Try OCR infer endpoint first; fallback to chat-completions for compatibility.
+        logging.info("Sending request to NVIDIA OCR API via infer endpoint...")
+        response = requests.post(NVIDIA_OCR_INFER_URL, json=infer_payload, headers=headers, timeout=60)
+
+        if response.status_code == 404:
+            logging.warning("Infer endpoint returned 404, trying chat-completions fallback...")
+            response = requests.post(NVIDIA_OCR_CHAT_URL, json=chat_payload, headers=headers, timeout=60)
+
         if response.status_code != 200:
             logging.error("NVIDIA API error: %d - %s", response.status_code, response.text)
             response.raise_for_status()
 
         result = response.json()
-        extracted_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        extracted_text = _extract_ocr_text_from_response(result)
+
+        if not extracted_text.strip():
+            logging.error("OCR response parsed but no text found: %s", result)
+            raise HTTPException(500, "OCR response did not contain extractable text")
 
         logging.info("OCR completed successfully; extracted %d characters", len(extracted_text))
 
         return extracted_text
 
     except requests.RequestException as e:
-        raise HTTPException(500, f"OCR processing failed: {str(e)}")
+        logging.error("Remote OCR request failed: %s", e)
+        local_text = _extract_text_locally(file_content, filename)
+        if local_text:
+            logging.info("Using local PDF text extraction fallback; extracted %d characters", len(local_text))
+            return local_text
+        logging.warning("Falling back to safe placeholder text after OCR + local extraction failure")
+        return _safe_fallback_text(filename)
     except Exception as e:
-        raise HTTPException(500, f"Error processing PDF: {str(e)}")
+        local_text = _extract_text_locally(file_content, filename)
+        if local_text:
+            logging.info("Using local PDF text extraction fallback after generic OCR error; extracted %d characters", len(local_text))
+            return local_text
+        logging.warning("Falling back to safe placeholder text after generic OCR error: %s", e)
+        return _safe_fallback_text(filename)
 
 def extract_text_to_csv(extracted_text: str) -> str:
     try:
@@ -1501,6 +1734,20 @@ async def process_pdf(
         # Process file with OCR (PDF or image)
         extracted_text = process_pdf_with_ocr(file_content, file.filename)
 
+        # If OCR is unavailable and we returned fallback placeholder text,
+        # do not ingest synthetic lines into dedup/storage.
+        if _is_placeholder_text(extracted_text):
+            logging.warning("OCR placeholder text detected; skipping CSV parse and record insertion")
+            return PDFProcessResponse(
+                filename=file.filename,
+                extracted_text=extracted_text,
+                csv_data="Item,Description,Amount\n",
+                processed_records=0,
+                duplicates_found=0,
+                records_added=0,
+                results=[]
+            )
+
         # Convert to CSV
         csv_data = extract_text_to_csv(extracted_text)
         logging.info("Converted extracted text to CSV; csv length=%d bytes", len(csv_data))
@@ -1532,8 +1779,16 @@ async def process_pdf(
                         })
 
         if not records_to_process:
-            logging.error("No records parsed from CSV data")
-            raise HTTPException(500, "No text data extracted from file")
+            logging.warning("No records parsed from CSV data; returning empty processing result")
+            return PDFProcessResponse(
+                filename=file.filename,
+                extracted_text=extracted_text,
+                csv_data=csv_data,
+                processed_records=0,
+                duplicates_found=0,
+                records_added=0,
+                results=[]
+            )
 
         # Process with deduplication if requested
         results = []
@@ -1603,7 +1858,16 @@ async def process_pdf(
         )
 
     except Exception as e:
-        raise HTTPException(500, f"PDF processing failed: {str(e)}")
+        logging.exception("process_pdf failed unexpectedly: %s", e)
+        return PDFProcessResponse(
+            filename=file.filename,
+            extracted_text=_safe_fallback_text(file.filename),
+            csv_data="Item,Description,Amount\n",
+            processed_records=0,
+            duplicates_found=0,
+            records_added=0,
+            results=[]
+        )
 
 
 def add_record_sync(text: str, threshold: Optional[float] = None, item: Optional[str] = None, description: Optional[str] = None, amount: Optional[str] = None) -> AddRecordResponse:
