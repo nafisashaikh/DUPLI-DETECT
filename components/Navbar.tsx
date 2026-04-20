@@ -73,7 +73,13 @@ export default function Navbar() {
           })}
         </div>
 
-        {/* Mobile burger */}
+        {/* Offline indicator + Mobile burger */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 999, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.12)' }}>
+            <span style={{ width: 9, height: 9, borderRadius: 99, background: '#10b981', display: 'inline-block' }} />
+            <span style={{ fontSize: '0.8rem', color: '#10b981', fontWeight: 600 }}>Local AI</span>
+          </div>
+
         <button
           onClick={() => setOpen(!open)}
           className="mobile-burger"
@@ -82,6 +88,7 @@ export default function Navbar() {
         >
           {open ? "✕" : "☰"}
         </button>
+        </div>
       </div>
 
       {/* Mobile drawer */}

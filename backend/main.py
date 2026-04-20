@@ -12,7 +12,16 @@ import uuid
 import io
 import csv
 from contextlib import asynccontextmanager
+import logging
 from typing import Any, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env or .env.local
+load_dotenv()  # looks for .env
+load_dotenv(".env.local")  # also load .env.local if it exists
+backend_env = os.path.join(os.path.dirname(__file__), ".env.local")
+if os.path.exists(backend_env):
+    load_dotenv(backend_env)
 
 from concept import ConceptMatcher, get_concept_score as concept_similarity
 from phonetic import get_phonetic_similarity as phonetic_similarity
@@ -112,7 +121,10 @@ DEFAULT_THRESHOLD = float(os.getenv("THRESHOLD", "0.75"))
 
 # NVIDIA API configuration
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
-NVIDIA_OCR_URL = "https://ai.api.nvidia.com/v1/vlm/nvidia/nemotron-ocr-v1"
+NVIDIA_OCR_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+# Configure basic logging for the backend
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 USE_SQLITE = _env_bool("USE_SQLITE", True)
 SQLITE_PATH = os.environ.get(
@@ -191,8 +203,13 @@ def _get_db():
 def _get_model():
     global _model
     if _model is None:
+        import time
         from sentence_transformers import SentenceTransformer
+        start = time.time()
+        logging.info("Loading embedding model: %s", MODEL_NAME)
         _model = SentenceTransformer(MODEL_NAME)
+        elapsed = time.time() - start
+        logging.info("Model loaded in %.2fs", elapsed)
     return _model
 
 # ---------------------------------------------------------------------------
@@ -208,7 +225,7 @@ def preprocess(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text
 
-def process_pdf_with_ocr(file_content: bytes) -> str:
+def process_pdf_with_ocr(file_content: bytes, filename: str | None = None) -> str:
     if not requests or not base64:
         raise HTTPException(500, "PDF processing dependencies not available")
 
@@ -217,18 +234,42 @@ def process_pdf_with_ocr(file_content: bytes) -> str:
         return "INVOICE #12345\nDate: 2024-1-15\nCustomer: John Doe\n\nItems:\n1. Laptop Computer - $999.99\n2. Wireless Mouse - $29.99\n3. USB Cable - $15.99\n\nSubtotal: $1045.97\nTax: $94.14\nTotal: $1140.11\n\nThank you for your business!"
 
     try:
-        # Convert PDF to base64
-        pdf_base64 = base64.b64encode(file_content).decode('utf-8')
+        logging.info("Starting OCR for filename=%s size=%d bytes", filename, len(file_content))
+        # Convert file content to base64 and prepare payload. Support PDF and images
+        b64 = base64.b64encode(file_content).decode('utf-8')
+        mime = 'application/pdf'
+        if filename:
+            fn = filename.lower()
+            if fn.endswith('.png'):
+                mime = 'image/png'
+            elif fn.endswith('.jpg') or fn.endswith('.jpeg'):
+                mime = 'image/jpeg'
+            elif fn.endswith('.tiff') or fn.endswith('.tif'):
+                mime = 'image/tiff'
 
-        # Prepare the request payload
+        data_uri = f"data:{mime};base64,{b64}"
+
+        # Prepare the request payload using standard multi-modal format for NIMs
         payload = {
+            "model": "nvidia/nemotron-ocr-v1",
             "messages": [
                 {
                     "role": "user",
-                    "content": f"Extract all text from this PDF document and return it as structured data. If there are tables, extract them as CSV format. Return the extracted text and any tabular data found.\n\nPDF: data:application/pdf;base64,{pdf_base64}"
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": "Extract all text from this document and return it as structured data. If there are tables, extract them as CSV format. Return the extracted text and any tabular data found."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_uri
+                            }
+                        }
+                    ]
                 }
             ],
-            "max_tokens": 2048,
+            "max_tokens": 1024,
             "temperature": 0.1,
             "stream": False
         }
@@ -238,11 +279,18 @@ def process_pdf_with_ocr(file_content: bytes) -> str:
             "Content-Type": "application/json"
         }
 
+        # Increased timeout to 60s for complex PDF/OCR tasks
+        logging.info("Sending request to NVIDIA OCR API...")
         response = requests.post(NVIDIA_OCR_URL, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
+        
+        if response.status_code != 200:
+            logging.error("NVIDIA API error: %d - %s", response.status_code, response.text)
+            response.raise_for_status()
 
         result = response.json()
         extracted_text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        logging.info("OCR completed successfully; extracted %d characters", len(extracted_text))
 
         return extracted_text
 
@@ -427,7 +475,14 @@ def compute_distance_matrix(texts: list[str], weights: dict[str, float]) -> np.n
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load Brain 1 model and instantiate Brain 3 concept matcher once at startup.
-    _get_model()
+    logger = logging.getLogger(__name__)
+    model = _get_model()
+    # Pre-warm the model to avoid first-request latency during demos
+    try:
+        _ = model.encode(["warmup"], show_progress_bar=False)
+        logger.info("Model pre-warmed and ready")
+    except Exception as e:
+        logger.warning(f"Model pre-warm failed: {e}")
     app.state.concept_matcher = ConceptMatcher()
     print("DupliDetect backend ready: model and ConceptMatcher loaded")
     yield
@@ -1427,8 +1482,10 @@ async def process_pdf(
     deduplicate: bool = True,
     threshold: Optional[float] = None
 ):
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(400, "Only PDF files are supported")
+    # Accept PDF and common image formats (jpg, jpeg, png, tiff)
+    fname = file.filename.lower()
+    if not (fname.endswith('.pdf') or fname.endswith('.png') or fname.endswith('.jpg') or fname.endswith('.jpeg') or fname.endswith('.tiff') or fname.endswith('.tif')):
+        raise HTTPException(400, "Only PDF and image files (png/jpg/tiff) are supported")
 
     # Read file content
     file_content = await file.read()
@@ -1440,11 +1497,13 @@ async def process_pdf(
         raise HTTPException(400, "File too large (max 10MB)")
 
     try:
-        # Process PDF with OCR
-        extracted_text = process_pdf_with_ocr(file_content)
+        logging.info("Processing upload: filename=%s size=%d bytes deduplicate=%s threshold=%s", file.filename, len(file_content), deduplicate, threshold)
+        # Process file with OCR (PDF or image)
+        extracted_text = process_pdf_with_ocr(file_content, file.filename)
 
         # Convert to CSV
         csv_data = extract_text_to_csv(extracted_text)
+        logging.info("Converted extracted text to CSV; csv length=%d bytes", len(csv_data))
 
         # Parse CSV and prepare records for deduplication
         csv_lines = csv_data.split('\n')
@@ -1473,7 +1532,8 @@ async def process_pdf(
                         })
 
         if not records_to_process:
-            raise HTTPException(500, "No text data extracted from PDF")
+            logging.error("No records parsed from CSV data")
+            raise HTTPException(500, "No text data extracted from file")
 
         # Process with deduplication if requested
         results = []
@@ -1482,27 +1542,37 @@ async def process_pdf(
         records_added = 0
 
         if deduplicate:
-            # Use bulk add with deduplication
+            # Use bulk add with deduplication to speed up embedding (batch encode)
             bulk_threshold = threshold if threshold is not None else DUPLICATE_THRESHOLD
-            # Need to modify bulk add to handle rich records
-            for record in records_to_process:
-                try:
-                    response = add_record_sync(record['text'], bulk_threshold, record['item'], record['description'], record['amount'])
-                    results.append(response)
-                    processed_records += 1
-                    if response.inserted:
-                        records_added += 1
-                    else:
-                        duplicates_found += 1
-                except Exception as e:
-                    results.append(AddRecordResponse(
-                        id="",
-                        text=record['text'],
-                        language="unknown",
-                        inserted=False,
-                        warning=f"Failed to add: {str(e)}",
-                        top_match=None,
-                    ))
+            texts = [r['text'] for r in records_to_process]
+            logging.info("Dedup bulk add for %d records (threshold=%s)", len(texts), bulk_threshold)
+            try:
+                bulk_resp = add_records_bulk_sync(texts, bulk_threshold)
+                results = bulk_resp.results
+                processed_records = bulk_resp.total
+                records_added = bulk_resp.added
+                duplicates_found = bulk_resp.duplicates
+            except Exception as e:
+                logging.error("Bulk add failed: %s", str(e))
+                # Fallback to per-record processing
+                for record in records_to_process:
+                    try:
+                        response = add_record_sync(record['text'], bulk_threshold, record['item'], record['description'], record['amount'])
+                        results.append(response)
+                        processed_records += 1
+                        if response.inserted:
+                            records_added += 1
+                        else:
+                            duplicates_found += 1
+                    except Exception as e2:
+                        results.append(AddRecordResponse(
+                            id="",
+                            text=record['text'],
+                            language="unknown",
+                            inserted=False,
+                            warning=f"Failed to add: {str(e2)}",
+                            top_match=None,
+                        ))
         else:
             # Add all records without deduplication
             for record in records_to_process:
@@ -1539,6 +1609,8 @@ async def process_pdf(
 def add_record_sync(text: str, threshold: Optional[float] = None, item: Optional[str] = None, description: Optional[str] = None, amount: Optional[str] = None) -> AddRecordResponse:
     if not text.strip():
         raise ValueError("text must be non-empty")
+    logger = logging.getLogger(__name__)
+    logger.info("add_record_sync: starting for item=%s text_len=%d", item or "-", len(text))
     lang = _detect_language(preprocess(text))
     threshold_val = threshold if threshold is not None else DUPLICATE_THRESHOLD
     threshold_val = max(0.0, min(1.0, threshold_val))
@@ -1561,6 +1633,7 @@ def add_record_sync(text: str, threshold: Optional[float] = None, item: Optional
             )
 
     if top_match:
+        logger.info("add_record_sync: duplicate found (sim=%s) for item=%s", top_match.similarity, item or "-")
         return AddRecordResponse(
             id="",
             text=text,
@@ -1572,6 +1645,7 @@ def add_record_sync(text: str, threshold: Optional[float] = None, item: Optional
 
     rid = _add_record_store(text, lang, emb.tolist(), item, description, amount)
     _mark_index_dirty()
+    logger.info("add_record_sync: inserted id=%s for item=%s", rid, item or "-")
     return AddRecordResponse(id=rid, text=text, language=lang, inserted=True)
 
 
@@ -1586,22 +1660,13 @@ def add_records_bulk_sync(texts: list[str], threshold: Optional[float] = None) -
     ids, base_texts, base_langs, base_mat = _get_embedding_index()
     base = base_mat if base_mat is not None else np.zeros((0, _get_emb_dim()), dtype=np.float32)
 
+    logger = logging.getLogger(__name__)
+    logger.info("add_records_bulk_sync: encoding %d texts (threshold=%s)", len(texts_in), threshold_val)
     embs = embed_many(texts_in)
+    logger.info("add_records_bulk_sync: encoding done; emb shape=%s", getattr(embs, 'shape', 'unknown'))
 
     results: list[AddRecordResponse] = []
     added = duplicates = failed = 0
-
-    # Detect duplicates within the same upload
-    pending_mat = np.zeros((0, _get_emb_dim()), dtype=np.float32)
-    pending_ids: list[str] = []
-    pending_texts: list[str] = []
-    pending_langs: list[str] = []
-
-    def flush_tail():
-        nonlocal pending_mat
-        if not pending_mat.shape[0]:
-            return
-        # No need to flush for this simplified version
 
     for i, text in enumerate(texts_in):
         try:
@@ -1639,17 +1704,17 @@ def add_records_bulk_sync(texts: list[str], threshold: Optional[float] = None) -
                         top_match=top_match,
                     )
                 )
+                logger.info("bulk: record %d duplicate (sim=%s) id=%s", i + 1, top_match.similarity, top_match.id)
                 continue
 
             rid = _add_record_store(text, lang, emb.tolist())
             added += 1
             results.append(AddRecordResponse(id=rid, text=text, language=lang, inserted=True))
-            pending_ids.append(rid)
-            pending_texts.append(text)
-            pending_langs.append(lang)
+            logger.info("bulk: record %d added id=%s", i + 1, rid)
 
         except Exception as exc:
             failed += 1
+            logger.exception("add_records_bulk_sync: failed to add record %d: %s", i + 1, exc)
             results.append(
                 AddRecordResponse(
                     id="",
@@ -1663,6 +1728,8 @@ def add_records_bulk_sync(texts: list[str], threshold: Optional[float] = None) -
 
     if added > 0:
         _mark_index_dirty()
+
+    logger.info("add_records_bulk_sync: finished total=%d added=%d duplicates=%d failed=%d", len(texts_in), added, duplicates, failed)
 
     return BulkAddResponse(
         total=len(texts_in),

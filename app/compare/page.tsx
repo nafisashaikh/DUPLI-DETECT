@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import BrainScores from "@/components/BrainScores";
 import { compareTexts } from "@/lib/api";
 import type { CompareResult } from "@/lib/types";
+import toast from "@/lib/toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -106,6 +107,7 @@ export default function ComparePage() {
       console.error(msg);
       setError(msg);
       setExplanation(`Error: ${msg}`);
+      try { toast(msg, { type: 'error' }); } catch {}
     } finally {
       setLoading(false);
     }

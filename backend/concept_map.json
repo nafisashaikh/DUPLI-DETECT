@@ -1,13 +1,13 @@
 {
   "concepts": {
     "CONCEPT_FRUIT_APPLE": {
-      "en": ["apple", "Apple fruit"],
+      "en": ["apple", "apple fruit"],
       "ja": ["りんご", "リンゴ"],
       "ar": ["تفاحة"],
       "hi": ["सेब"]
     },
     "CONCEPT_FRUIT_BANANA": {
-      "en": ["banana", "Banana fruit"],
+      "en": ["banana", "banana fruit"],
       "ja": ["バナナ"],
       "ar": ["موز"],
       "hi": ["केला"]
@@ -21,7 +21,7 @@
     "CONCEPT_FRUIT_MANGO": {
       "en": ["mango", "mango fruit"],
       "ja": ["マンゴー"],
-      "ar": ["マンゴー"],
+      "ar": ["مانجو"],
       "hi": ["आम"]
     },
     "CONCEPT_FRUIT_GRAPE": {
@@ -30,28 +30,10 @@
       "ar": ["عنب"],
       "hi": ["अंगूर"]
     },
-    "CONCEPT_FRUIT_LEMON": {
-      "en": ["lemon", "lemon fruit"],
-      "ja": ["レモン"],
-      "ar": ["ليمون"],
-      "hi": ["नींबू"]
-    },
-    "CONCEPT_FRUIT_STRAWBERRY": {
-      "en": ["strawberry", "strawberries"],
-      "ja": ["いちご", "イチゴ"],
-      "ar": ["فراولة"],
-      "hi": ["स्ट्रॉबेरी"]
-    },
-    "CONCEPT_FRUIT_PINEAPPLE": {
-      "en": ["pineapple", "pine apple"],
-      "ja": ["パイナップル"],
-      "ar": ["أناناس"],
-      "hi": ["अनानास"]
-    },
     "CONCEPT_COMPANY_APPLE": {
-      "en": ["Apple", "Apple Inc."],
+      "en": ["Apple Inc", "Apple company"],
       "ja": ["アップル"],
-      "ar": ["آبل"],
+      "ar": ["أبل", "آبل"],
       "hi": ["एप्पल"]
     },
     "CONCEPT_COMPANY_MICROSOFT": {
@@ -65,132 +47,6 @@
       "ja": ["グーグル"],
       "ar": ["جوجل"],
       "hi": ["गूगल"]
-    },
-    "CONCEPT_COMPANY_AMAZON": {
-      "en": ["Amazon", "Amazon.com"],
-      "ja": ["アマゾン"],
-      "ar": ["أمازون"],
-      "hi": ["अमेज़न"]
-    },
-    "CONCEPT_COMPANY_SAMSUNG": {
-      "en": ["Samsung", "Samsung Electronics"],
-      "ja": ["サムスン"],
-      "ar": ["سامسونج"],
-      "hi": ["सैमसंग"]
-    },
-    "CONCEPT_COMPANY_IBM": {
-      "en": ["IBM", "International Business Machines"],
-      "ja": ["アイビーエム"],
-      "ar": ["آي بي إم"],
-      "hi": ["आईबीएम"]
-    },
-    "CONCEPT_COMPANY_TESLA": {
-      "en": ["Tesla", "Tesla Motors"],
-      "ja": ["テスラ"],
-      "ar": ["تسلا"],
-      "hi": ["टेस्ला"]
-    },
-    "CONCEPT_COMPANY_META": {
-      "en": ["Meta", "Meta Platforms"],
-      "ja": ["メタ"],
-      "ar": ["ميتا"],
-      "hi": ["मेटा"]
-    },
-    "CONCEPT_CITY_TOKYO": {
-      "en": ["Tokyo"],
-      "ja": ["東京", "とうきょう"],
-      "ar": ["طوكيو"],
-      "hi": ["टोक्यो"]
-    },
-    "CONCEPT_CITY_NEW_YORK": {
-      "en": ["New York", "New York City"],
-      "ja": ["ニューヨーク"],
-      "ar": ["نيويورك"],
-      "hi": ["न्यूयॉर्क"]
-    },
-    "CONCEPT_CITY_PARIS": {
-      "en": ["Paris"],
-      "ja": ["パリ"],
-      "ar": ["باريس"],
-      "hi": ["पेरिस"]
-    },
-    "CONCEPT_CITY_LONDON": {
-      "en": ["London"],
-      "ja": ["ロンドン"],
-      "ar": ["لندن"],
-      "hi": ["लंदन"]
-    },
-    "CONCEPT_CITY_CAIRO": {
-      "en": ["Cairo"],
-      "ja": ["カイロ"],
-      "ar": ["القاهرة"],
-      "hi": ["कैरो"]
-    },
-    "CONCEPT_CITY_MUMBAI": {
-      "en": ["Mumbai"],
-      "ja": ["ムンバイ"],
-      "ar": ["مومباي"],
-      "hi": ["मुंबई"]
-    },
-    "CONCEPT_CITY_MOSCOW": {
-      "en": ["Moscow"],
-      "ja": ["モスクワ"],
-      "ar": ["موسكو"],
-      "hi": ["मॉस्को"]
-    },
-    "CONCEPT_CITY_SYDNEY": {
-      "en": ["Sydney"],
-      "ja": ["シドニー"],
-      "ar": ["سيدني"],
-      "hi": ["सिडनी"]
-    },
-    "CONCEPT_COUNTRY_USA": {
-      "en": ["United States", "USA", "US"],
-      "ja": ["アメリカ", "アメリカ合衆国"],
-      "ar": ["الولايات المتحدة"],
-      "hi": ["संयुक्त राज्य"]
-    },
-    "CONCEPT_COUNTRY_JAPAN": {
-      "en": ["Japan"],
-      "ja": ["日本"],
-      "ar": ["اليابان"],
-      "hi": ["जापान"]
-    },
-    "CONCEPT_COUNTRY_FRANCE": {
-      "en": ["France"],
-      "ja": ["フランス"],
-      "ar": ["فرنسا"],
-      "hi": ["फ्रांस"]
-    },
-    "CONCEPT_COUNTRY_GERMANY": {
-      "en": ["Germany"],
-      "ja": ["ドイツ"],
-      "ar": ["ألمانيا"],
-      "hi": ["जर्मनी"]
-    },
-    "CONCEPT_COUNTRY_INDIA": {
-      "en": ["India"],
-      "ja": ["インド"],
-      "ar": ["الهند"],
-      "hi": ["भारत"]
-    },
-    "CONCEPT_COUNTRY_BRAZIL": {
-      "en": ["Brazil"],
-      "ja": ["ブラジル"],
-      "ar": ["البرازيل"],
-      "hi": ["ब्राज़ील"]
-    },
-    "CONCEPT_COUNTRY_EGYPT": {
-      "en": ["Egypt"],
-      "ja": ["エジプト"],
-      "ar": ["مصر"],
-      "hi": ["मिस्र"]
-    },
-    "CONCEPT_COUNTRY_RUSSIA": {
-      "en": ["Russia"],
-      "ja": ["ロシア"],
-      "ar": ["روسيا"],
-      "hi": ["रूस"]
     },
     "CONCEPT_BEVERAGE_COCACOLA": {
       "en": ["Coca-Cola", "Coke", "coca cola"],
@@ -210,36 +66,6 @@
       "ar": ["شاي"],
       "hi": ["चाय"]
     },
-    "CONCEPT_BEVERAGE_COFFEE": {
-      "en": ["coffee", "espresso", "latte"],
-      "ja": ["コーヒー"],
-      "ar": ["قهوة"],
-      "hi": ["कॉफ़ी"]
-    },
-    "CONCEPT_BEVERAGE_BEER": {
-      "en": ["beer", "lager", "ale"],
-      "ja": ["ビール"],
-      "ar": ["بيرة"],
-      "hi": ["बीयर"]
-    },
-    "CONCEPT_BEVERAGE_WINE": {
-      "en": ["wine", "red wine", "white wine"],
-      "ja": ["ワイン"],
-      "ar": ["نبيذ"],
-      "hi": ["शराब"]
-    },
-    "CONCEPT_BEVERAGE_ORANGE_JUICE": {
-      "en": ["orange juice", "OJ"],
-      "ja": ["オレンジジュース"],
-      "ar": ["عصير البرتقال"],
-      "hi": ["संतरे का रस"]
-    },
-    "CONCEPT_BEVERAGE_WATER": {
-      "en": ["water", "drinking water"],
-      "ja": ["水", "ミズ"],
-      "ar": ["ماء"],
-      "hi": ["पानी"]
-    },
     "CONCEPT_CAR_TOYOTA": {
       "en": ["Toyota", "Toyota Motor Corporation"],
       "ja": ["トヨタ"],
@@ -252,65 +78,35 @@
       "ar": ["بي إم دبليو"],
       "hi": ["बीएमडब्ल्यू"]
     },
-    "CONCEPT_CAR_MERCEDES": {
-      "en": ["Mercedes", "Mercedes-Benz"],
-      "ja": ["メルセデス"],
-      "ar": ["مرسيدس"],
-      "hi": ["मर्सिडीज"]
+    "CONCEPT_CITY_TOKYO": {
+      "en": ["Tokyo"],
+      "ja": ["東京", "とうきょう"],
+      "ar": ["طوكيو"],
+      "hi": ["टोक्यो"]
     },
-    "CONCEPT_CAR_HONDA": {
-      "en": ["Honda"],
-      "ja": ["ホンダ"],
-      "ar": ["هوندا"],
-      "hi": ["होंडा"]
+    "CONCEPT_CITY_NEW_YORK": {
+      "en": ["New York", "New York City"],
+      "ja": ["ニューヨーク"],
+      "ar": ["نيويورك"],
+      "hi": ["न्यूयॉर्क"]
     },
-    "CONCEPT_CAR_AUDI": {
-      "en": ["Audi"],
-      "ja": ["アウディ"],
-      "ar": ["أودي"],
-      "hi": ["ऑडी"]
+    "CONCEPT_COUNTRY_JAPAN": {
+      "en": ["Japan"],
+      "ja": ["日本", "にほん"],
+      "ar": ["اليابان"],
+      "hi": ["जापान"]
     },
-    "CONCEPT_CAR_FORD": {
-      "en": ["Ford"],
-      "ja": ["フォード"],
-      "ar": ["فورد"],
-      "hi": ["फोर्ड"]
+    "CONCEPT_COUNTRY_USA": {
+      "en": ["United States", "USA", "US"],
+      "ja": ["アメリカ", "アメリカ合衆国"],
+      "ar": ["الولايات المتحدة"],
+      "hi": ["संयुक्त राज्य"]
     },
-    "CONCEPT_SPORT_SOCCER": {
-      "en": ["soccer", "football"],
-      "ja": ["サッカー"],
-      "ar": ["كرة القدم"],
-      "hi": ["फ़ुटबॉल"]
-    },
-    "CONCEPT_SPORT_BASKETBALL": {
-      "en": ["basketball"],
-      "ja": ["バスケットボール"],
-      "ar": ["كرة السلة"],
-      "hi": ["बास्केटबॉल"]
-    },
-    "CONCEPT_SPORT_TENNIS": {
-      "en": ["tennis"],
-      "ja": ["テニス"],
-      "ar": ["تنس"],
-      "hi": ["टेनिस"]
-    },
-    "CONCEPT_SPORT_CRICKET": {
-      "en": ["cricket"],
-      "ja": ["クリケット"],
-      "ar": ["الكريكيت"],
-      "hi": ["क्रिकेट"]
-    },
-    "CONCEPT_SPORT_RUGBY": {
-      "en": ["rugby"],
-      "ja": ["ラグビー"],
-      "ar": ["رجبي"],
-      "hi": ["रग्बी"]
-    },
-    "CONCEPT_SPORT_BASEBALL": {
-      "en": ["baseball"],
-      "ja": ["野球", "ベースボール"],
-      "ar": ["البيسبول"],
-      "hi": ["बेसबॉल"]
+    "CONCEPT_CURRENCY_DOLLAR": {
+      "en": ["USD", "Dollar", "US Dollar"],
+      "ja": ["ドル", "米ドル"],
+      "ar": ["دولار"],
+      "hi": ["डॉलर", "यूएस डॉलर"]
     },
     "CONCEPT_CURRENCY_USD": {
       "en": ["USD", "US Dollar", "dollar"],
@@ -318,35 +114,17 @@
       "ar": ["دولار"],
       "hi": ["यूएस डॉलर"]
     },
-    "CONCEPT_CURRENCY_EUR": {
-      "en": ["EUR", "Euro", "euro"],
-      "ja": ["ユーロ"],
-      "ar": ["يورو"],
-      "hi": ["यूरो"]
+    "CONCEPT_SPORT_FOOTBALL": {
+      "en": ["Football", "Soccer"],
+      "ja": ["サッカー"],
+      "ar": ["كرة القدم"],
+      "hi": ["फ़ुटबॉल"]
     },
-    "CONCEPT_CURRENCY_JPY": {
-      "en": ["JPY", "Japanese Yen", "yen"],
-      "ja": ["円", "日本円"],
-      "ar": ["ين"],
-      "hi": ["येन"]
-    },
-    "CONCEPT_CURRENCY_INR": {
-      "en": ["INR", "Indian Rupee", "rupee"],
-      "ja": ["インドルピー"],
-      "ar": ["روبية"],
-      "hi": ["भारतीय रुपया"]
-    },
-    "CONCEPT_CURRENCY_GBP": {
-      "en": ["GBP", "Pound", "British Pound"],
-      "ja": ["英ポンド"],
-      "ar": ["جنيه"],
-      "hi": ["ब्रिटिश पाउंड"]
-    },
-    "CONCEPT_CURRENCY_RUB": {
-      "en": ["RUB", "Russian Ruble", "ruble"],
-      "ja": ["ロシアルーブル"],
-      "ar": ["روبل"],
-      "hi": ["रूबल"]
+    "CONCEPT_SPORT_SOCCER": {
+      "en": ["soccer", "football"],
+      "ja": ["サッカー"],
+      "ar": ["كرة القدم"],
+      "hi": ["फ़ुटबॉल"]
     }
   }
 }

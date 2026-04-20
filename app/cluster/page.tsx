@@ -1,17 +1,17 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import GroupSummaryCard from "@/components/GroupSummaryCard";
+import toast from "@/lib/toast";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const DEFAULT_WEIGHTS = { semantic: 0.4, phonetic: 0.3, concept: 0.3 };
+const DEFAULT_EPSILON = 0.5;
+
 export default function ClusterPage() {
   const [texts, setTexts] = useState<string[]>(["", "", ""]);
-  const [weights, setWeights] = useState({
-    semantic: 0.4,
-    phonetic: 0.3,
-    concept: 0.3,
-  });
-  const [eps, setEps] = useState(0.25);
+  const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
+  const [eps, setEps] = useState(DEFAULT_EPSILON);
   const [clusterResult, setClusterResult] = useState<any>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -21,7 +21,9 @@ export default function ClusterPage() {
   const performClustering = async () => {
     const nonEmptyTexts = texts.filter((t) => t.trim());
     if (nonEmptyTexts.length < 2) {
-      setError("At least 2 texts required for clustering");
+      const msg = "At least 2 texts required for clustering";
+      setError(msg);
+      try { toast(msg, { type: 'error' }); } catch {}
       setClusterResult(null);
       return;
     }
@@ -49,7 +51,9 @@ export default function ClusterPage() {
       setClusterResult(data);
       setSelectedGroupId(null);
     } catch (e: any) {
-      setError(e.message);
+      const msg = e?.message || String(e);
+      setError(msg);
+      try { toast(msg, { type: 'error' }); } catch {}
       setClusterResult(null);
     } finally {
       setLoading(false);
@@ -85,6 +89,16 @@ export default function ClusterPage() {
     debounceTimerRef.current = setTimeout(() => {
       performClustering();
     }, 500);
+  };
+
+  const handleReset = () => {
+    setWeights(DEFAULT_WEIGHTS);
+    setEps(DEFAULT_EPSILON);
+    // Trigger clustering if there is sufficient data
+    const nonEmptyTexts = texts.filter((t) => t.trim());
+    if (nonEmptyTexts.length >= 2) {
+      performClustering();
+    }
   };
 
   const handleAddText = () => {
@@ -348,6 +362,38 @@ export default function ClusterPage() {
                   </span>
                 </div>
               ))}
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                onClick={() => performClustering()}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  backgroundColor: '#4338ca',
+                  color: '#fff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                ⚡ Cluster
+              </button>
+
+              <button
+                onClick={handleReset}
+                title="Reset to defaults"
+                style={{
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  backgroundColor: 'transparent',
+                  border: '1px solid rgba(99,102,241,0.18)',
+                  color: '#6366f1',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                ↻ Reset
+              </button>
             </div>
           </div>
         </div>
