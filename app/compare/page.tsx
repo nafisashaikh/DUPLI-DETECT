@@ -5,8 +5,6 @@ import { compareTexts } from "@/lib/api";
 import type { CompareResult } from "@/lib/types";
 import toast from "@/lib/toast";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 const EXAMPLES = [
   { t1: "Login issue", t2: "ログインの問題", label: "EN → JP" },
   { t1: "Login issue", t2: "登录问题", label: "EN → ZH" },
@@ -71,14 +69,19 @@ export default function ComparePage() {
   const [text2, setText2] = useState("");
   const [weights, setWeights] = useState({ semantic: 0.4, phonetic: 0.3, concept: 0.3 });
   const [threshold, setThreshold] = useState(0.75);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<CompareResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [explanation, setExplanation] = useState("");
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const performComparison = async (t1: string, t2: string, w: any, th: number) => {
+  const performComparison = async (
+    t1: string,
+    t2: string,
+    w: { semantic: number; phonetic: number; concept: number },
+    th: number,
+  ) => {
     if (!t1.trim() || !t2.trim()) {
       setResult(null);
       setExplanation("");
@@ -87,18 +90,12 @@ export default function ComparePage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/compare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text1: t1, text2: t2, weights: w, threshold: th }),
+      const data = await compareTexts(t1, t2, {
+        semanticWeight: w.semantic,
+        phoneticWeight: w.phonetic,
+        conceptWeight: w.concept,
+        threshold: th,
       });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(err || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
       setResult(data);
       setExplanation(data.explanation || "");
       setError("");
@@ -129,7 +126,7 @@ export default function ComparePage() {
     await performComparison(text1, text2, weights, threshold);
   };
 
-  const handleWeightsChange = (newWeights: any) => {
+  const handleWeightsChange = (newWeights: { semantic: number; phonetic: number; concept: number }) => {
     setWeights(newWeights);
   };
 
@@ -238,6 +235,7 @@ export default function ComparePage() {
             phoneticScore={result.phonetic_score}
             conceptScore={result.concept_score}
             finalScore={result.final_score}
+            isDuplicate={result.is_duplicate}
             explanation={explanation}
             weights={weights}
             onWeightsChange={handleWeightsChange}

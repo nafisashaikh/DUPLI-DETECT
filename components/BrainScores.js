@@ -5,6 +5,7 @@ export default function BrainScores({
   phoneticScore,
   conceptScore,
   finalScore,
+  isDuplicate,
   explanation,
   weights,
   onWeightsChange,
@@ -81,7 +82,7 @@ export default function BrainScores({
     onThresholdChange(value);
   };
 
-  const duplicate = finalScore >= threshold;
+  const duplicate = typeof isDuplicate === "boolean" ? isDuplicate : finalScore >= threshold;
 
   return (
     <div style={{ display: "grid", gap: 20, padding: 24, background: "#111827", borderRadius: 24, color: "#f8fafc" }}>

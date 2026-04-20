@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useRef, useState, useCallback } from "react";
-import { searchSimilar, listRecords, exportCSV } from "@/lib/api";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { searchSimilar, listRecords, exportCSV, clusterTexts } from "@/lib/api";
 import type { Record as DDRecord, SearchMatch } from "@/lib/types";
+import ExportButton from "@/src/components/ExportButton";
 import styles from "./dashboard.module.css";
 
 // ─── D3 graph types (minimal, avoid full import in SSR) ───────────────────
@@ -65,20 +66,18 @@ export default function DashboardPage() {
         });
       });
 
-      // Use actual DBSCAN implementation from the /cluster API instead of naive union-find
-      const clusterResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/cluster`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ texts: recs.map(r => r.text), eps: Math.max(0.01, 1 - (thresh / 100)) })
-      });
-      const clusterData = await clusterResponse.json();
+      // Use DBSCAN implementation from /cluster via shared API client.
+      const clusterData = await clusterTexts(
+        recs.map((r) => r.text),
+        Math.max(0.01, 1 - (thresh / 100)),
+      );
       
       const nodeToGroup: number[] = new Array(recs.length).fill(-1);
       let maxGroup = 0;
       if (clusterData.groups) {
-        clusterData.groups.forEach((g: any) => {
+        clusterData.groups.forEach((g) => {
           if (g.group_id > maxGroup) maxGroup = g.group_id;
-          g.items.forEach((item: any) => {
+          g.items.forEach((item) => {
             const i = parseInt(item.id, 10);
             if (!isNaN(i)) nodeToGroup[i] = g.group_id;
           });
@@ -270,6 +269,28 @@ export default function DashboardPage() {
     return (styles as Record<string, string>)[`cluster${g}`] ?? "";
   };
 
+  const exportData = useMemo(() => ({
+    title: "DupliDetect Dashboard Report",
+    summary: {
+      Records: stats.nodes,
+      Edges: stats.edges,
+      Clusters: stats.groups,
+      Threshold: `${threshold}%`,
+    },
+    duplicateGroups: graphEdges.map((e, index) => ({
+      groupId: e.source.group === e.target.group ? `Cluster ${e.source.group + 1}` : "Cross-cluster",
+      record1: e.source.text,
+      record2: e.target.text,
+      similarityScore: `${Math.round(e.weight * 100)}%`,
+      language:
+        e.source.language === e.target.language
+          ? e.source.language
+          : `${e.source.language}/${e.target.language}`,
+      rowId: `${e.source.id}-${e.target.id}-${index}`,
+    })),
+    chartRef: canvasRef,
+  }), [stats, threshold, graphEdges]);
+
   return (
     <div className={styles.container}>
       <div className={`${styles.header} animate-fade-up`}>
@@ -312,6 +333,7 @@ export default function DashboardPage() {
             />
           </div>
           <div className={styles.controlsRight}>
+            <ExportButton data={exportData} className={`btn btn-secondary ${styles.downloadButton}`} />
             <button
               className={`btn btn-secondary ${styles.downloadButton}`}
               onClick={async () => {

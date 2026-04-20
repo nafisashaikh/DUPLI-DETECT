@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 import langdetect
@@ -23,6 +25,15 @@ EPITRAN_LANG_MAP: dict[str, str] = {
 }
 
 FALLBACK_SCORE = 0.5
+MAX_PHONETIC_CHARS = int(os.getenv("MAX_PHONETIC_CHARS", "256"))
+
+
+def _normalize_for_phonetic(text: str) -> str:
+    # Keep a compact representative slice for faster language detection/transliteration.
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    if len(t) > MAX_PHONETIC_CHARS:
+        t = t[:MAX_PHONETIC_CHARS]
+    return t
 
 
 def _detect_language(text: str) -> dict[str, Any]:
@@ -70,11 +81,13 @@ def get_phonetic_similarity(text1: str, text2: str) -> float:
     Brain 2.
     """
     try:
-        if not text1.strip() or not text2.strip():
+        t1 = _normalize_for_phonetic(text1)
+        t2 = _normalize_for_phonetic(text2)
+        if not t1 or not t2:
             return FALLBACK_SCORE
 
-        lang1 = _detect_language(text1)
-        lang2 = _detect_language(text2)
+        lang1 = _detect_language(t1)
+        lang2 = _detect_language(t2)
 
         if lang1["score"] < 0.5 or lang2["score"] < 0.5:
             return FALLBACK_SCORE
@@ -84,8 +97,8 @@ def get_phonetic_similarity(text1: str, text2: str) -> float:
         if ep1 is None or ep2 is None:
             return FALLBACK_SCORE
 
-        ipa1 = ep1.transliterate(text1) or ""
-        ipa2 = ep2.transliterate(text2) or ""
+        ipa1 = ep1.transliterate(t1) or ""
+        ipa2 = ep2.transliterate(t2) or ""
 
         if not ipa1 and not ipa2:
             return FALLBACK_SCORE

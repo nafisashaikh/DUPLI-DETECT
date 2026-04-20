@@ -2,24 +2,45 @@
 import type { CompareResult, SearchResponse, AddRecordResponse, BulkAddResponse, Record as DDRecord } from "./types";
 import { defaultThreshold01, defaultBulkChunkSize } from "./config";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const ENV_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+
+function runtimeBase(): string {
+  const env = ENV_BASE.replace(/\/$/, "");
+  if (typeof window === "undefined") return env;
+  if (process.env.NEXT_PUBLIC_API_URL) return env;
+
+  const host = window.location.hostname;
+  if (host && host !== "localhost" && host !== "127.0.0.1") {
+    return `http://${host}:8000`;
+  }
+  return env;
+}
 
 function fallbackBases(base: string): string[] {
   const b = base.replace(/\/$/, "");
-  if (b.includes("localhost")) return [b.replace("localhost", "127.0.0.1")];
-  if (b.includes("127.0.0.1")) return [b.replace("127.0.0.1", "localhost")];
-  return [];
+  const out: string[] = [];
+  if (b.includes("localhost")) out.push(b.replace("localhost", "127.0.0.1"));
+  if (b.includes("127.0.0.1")) out.push(b.replace("127.0.0.1", "localhost"));
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host && host !== "localhost" && host !== "127.0.0.1") {
+      const lan = `http://${host}:8000`;
+      if (lan !== b) out.push(lan);
+    }
+  }
+  return Array.from(new Set(out));
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const primaryBase = runtimeBase();
   let res: Response | undefined;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetch(`${primaryBase}${path}`, {
       headers: { "Content-Type": "application/json" },
       ...options,
     });
   } catch (e: unknown) {
-    for (const fb of fallbackBases(BASE)) {
+    for (const fb of fallbackBases(primaryBase)) {
       try {
         res = await fetch(`${fb}${path}`, {
           headers: { "Content-Type": "application/json" },
@@ -33,7 +54,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 
     if (!res) {
       const detail = e instanceof Error ? e.message : String(e);
-      throw new Error(`API ${path}: failed to reach ${BASE} (${detail}). Is the backend running?`);
+      throw new Error(`API ${path}: failed to reach ${primaryBase} (${detail}). Is the backend running?`);
     }
   }
   if (!res.ok) {
@@ -181,7 +202,7 @@ export function listRecords(): Promise<DDRecord[]> {
 }
 
 export async function exportCSV(): Promise<string> {
-  const res = await fetch(`${BASE}/export-csv`);
+  const res = await fetch(`${runtimeBase()}/export-csv`);
   if (!res.ok) {
     throw new Error(`API /export-csv: ${res.status} — ${await res.text()}`);
   }
@@ -253,11 +274,25 @@ export function getReport(): Promise<{
 }
 
 export async function downloadReport(): Promise<string> {
-  const res = await fetch(`${BASE}/report/download`);
+  const res = await fetch(`${runtimeBase()}/report/download`);
   if (!res.ok) {
     throw new Error(`API /report/download: ${res.status} — ${await res.text()}`);
   }
   return res.text();
+}
+
+export type ClusterApiResponse = {
+  groups?: Array<{
+    group_id: number;
+    items: Array<{ id: string }>;
+  }>;
+};
+
+export function clusterTexts(texts: string[], eps: number): Promise<ClusterApiResponse> {
+  return api<ClusterApiResponse>("/cluster", {
+    method: "POST",
+    body: JSON.stringify({ texts, eps }),
+  });
 }
 
 

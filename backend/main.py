@@ -11,6 +11,8 @@ import unicodedata
 import uuid
 import io
 import csv
+import threading
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 import logging
 from typing import Any, Optional
@@ -108,6 +110,14 @@ _emb_index_ids: list[str] = []
 _emb_index_texts: list[str] = []
 _emb_index_langs: list[str] = []
 _emb_index_mat: Optional[np.ndarray] = None  # shape (N, D), float32
+
+# Small LRU caches for compare hot path.
+_EMBED_CACHE_MAX = int(os.getenv("EMBED_CACHE_MAX", "2000"))
+_COMPARE_BRAIN_CACHE_MAX = int(os.getenv("COMPARE_BRAIN_CACHE_MAX", "3000"))
+_embed_cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
+_compare_brain_cache: "OrderedDict[tuple[str, str], tuple[float, float, float]]" = OrderedDict()
+_embed_cache_lock = threading.Lock()
+_compare_cache_lock = threading.Lock()
 _rapid_ocr_engine = None
 
 def _get_emb_dim() -> int:
@@ -564,7 +574,23 @@ def extract_text_to_csv(extracted_text: str) -> str:
 # Embedding & similarity
 # ---------------------------------------------------------------------------
 def embed(text: str) -> np.ndarray:
-    return _get_model().encode(preprocess(text), normalize_embeddings=True)
+    key = preprocess(text)
+    with _embed_cache_lock:
+        cached = _embed_cache.get(key)
+        if cached is not None:
+            _embed_cache.move_to_end(key)
+            return cached
+
+    vec = np.asarray(
+        _get_model().encode(key, normalize_embeddings=True),
+        dtype=np.float32,
+    )
+    with _embed_cache_lock:
+        _embed_cache[key] = vec
+        _embed_cache.move_to_end(key)
+        while len(_embed_cache) > _EMBED_CACHE_MAX:
+            _embed_cache.popitem(last=False)
+    return vec
 
 def embed_many(texts: list[str]) -> np.ndarray:
     arr = _get_model().encode(
@@ -573,6 +599,40 @@ def embed_many(texts: list[str]) -> np.ndarray:
         show_progress_bar=False,
     )
     return np.asarray(arr, dtype=np.float32)
+
+
+def _brain_cache_key(text1: str, text2: str) -> tuple[str, str]:
+    # Similarity is symmetric, so normalize key order.
+    p1 = preprocess(text1)
+    p2 = preprocess(text2)
+    return (p1, p2) if p1 <= p2 else (p2, p1)
+
+
+def _compute_brain_scores(text1: str, text2: str) -> tuple[float, float, float]:
+    key = _brain_cache_key(text1, text2)
+    with _compare_cache_lock:
+        cached = _compare_brain_cache.get(key)
+        if cached is not None:
+            _compare_brain_cache.move_to_end(key)
+            return cached
+
+    pair_embeddings = embed_many([text1, text2])
+    semantic_score = float(cosine_similarity(pair_embeddings[0], pair_embeddings[1]))
+    phonetic_score = phonetic_similarity(text1, text2)
+    concept_score = app.state.concept_matcher.get_concept_score(text1, text2)
+
+    scores = (
+        max(0.0, min(1.0, semantic_score)),
+        max(0.0, min(1.0, phonetic_score)),
+        max(0.0, min(1.0, concept_score)),
+    )
+
+    with _compare_cache_lock:
+        _compare_brain_cache[key] = scores
+        _compare_brain_cache.move_to_end(key)
+        while len(_compare_brain_cache) > _COMPARE_BRAIN_CACHE_MAX:
+            _compare_brain_cache.popitem(last=False)
+    return scores
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))          # vectors already L2-normalised
@@ -1292,9 +1352,7 @@ def compare(req: CompareRequest):
         threshold = req.threshold if req.threshold is not None else DEFAULT_THRESHOLD
         threshold = max(0.0, min(1.0, float(threshold)))
 
-        semantic_score = float(cosine_similarity(embed(req.text1), embed(req.text2)))
-        phonetic_score = phonetic_similarity(req.text1, req.text2)
-        concept_score = app.state.concept_matcher.get_concept_score(req.text1, req.text2)
+        semantic_score, phonetic_score, concept_score = _compute_brain_scores(req.text1, req.text2)
 
         final_score = (
             semantic_score * weights["semantic"]
@@ -1303,6 +1361,15 @@ def compare(req: CompareRequest):
         )
 
         is_duplicate = final_score >= threshold
+        override_reason = ""
+        # Strong Brain 3 match should not be suppressed by strict weighted thresholding.
+        if not is_duplicate and concept_score >= 0.8:
+            is_duplicate = True
+            override_reason = "concept_override"
+        # High semantic + non-trivial phonetic support usually indicates same record phrasing.
+        elif not is_duplicate and semantic_score >= 0.9 and phonetic_score >= 0.45:
+            is_duplicate = True
+            override_reason = "semantic_override"
 
         explanation_parts: list[str] = []
         if concept_score == 1.0:
@@ -1311,8 +1378,12 @@ def compare(req: CompareRequest):
             explanation_parts.append("High phonetic similarity")
         if semantic_score > 0.8:
             explanation_parts.append("High semantic similarity")
-        if final_score < threshold:
+        if final_score < threshold and not is_duplicate:
             explanation_parts.append("Combined score below threshold")
+        if override_reason == "concept_override":
+            explanation_parts.append("Duplicate promoted by strong concept match")
+        elif override_reason == "semantic_override":
+            explanation_parts.append("Duplicate promoted by strong semantic match")
         explanation = " and ".join(explanation_parts) or "Comparison completed"
 
         return {
@@ -1321,6 +1392,7 @@ def compare(req: CompareRequest):
             "phonetic_score": round(phonetic_score, 4),
             "concept_score": concept_score,
             "final_score": round(final_score, 4),
+            "decision_mode": override_reason or "weighted",
             "explanation": explanation,
         }
     except HTTPException:
