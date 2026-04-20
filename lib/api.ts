@@ -198,7 +198,8 @@ export async function addRecordsBulkServerChunked(
 }
 
 export function listRecords(): Promise<DDRecord[]> {
-  return api<DDRecord[]>("/records");
+  const ts = typeof window !== "undefined" ? `?_ts=${Date.now()}` : "";
+  return api<DDRecord[]>(`/records${ts}`);
 }
 
 export async function exportCSV(): Promise<string> {

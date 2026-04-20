@@ -1,10 +1,33 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { searchSimilar, addRecord, addRecordsBulkServerChunked, listRecords, deleteRecord } from "@/lib/api";
+import { searchSimilar, addRecord, addRecordsBulkServer, addRecordsBulkServerChunked, listRecords, deleteRecord } from "@/lib/api";
 import type { SearchMatch, Record as DDRecord } from "@/lib/types";
 import { defaultThresholdPercent, defaultBulkChunkSize } from "@/lib/config";
 import Papa from "papaparse";
 import styles from "./search.module.css";
+
+const RECORDS_CACHE_KEY = "duplidetect_records_cache_v1";
+
+function loadCachedRecords(): DDRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECORDS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedRecords(records: DDRecord[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(RECORDS_CACHE_KEY, JSON.stringify(records));
+  } catch {
+    // ignore storage failures
+  }
+}
 
 function SimilarityBar({ value }: { value: number }) {
   const tone = value >= 70 ? "success" : value >= 50 ? "warn" : "accent";
@@ -46,14 +69,37 @@ export default function SearchPage() {
   const [csvMsg, setCsvMsg] = useState<{ type: "success" | "warn" | "error"; text: string } | null>(null);
   const [csvProgress, setCsvProgress] = useState<{ done: number; total: number; added: number; duplicates: number; failed: number } | null>(null);
   const [csvUploading, setCsvUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchRecords = useCallback(async () => {
-    try { setRecords(await listRecords()); } catch { /* ignore */ }
+  const fetchRecords = useCallback(async (allowCacheFallback = true) => {
+    setRefreshing(true);
+    try {
+      const latest = await listRecords();
+      setRecords(latest);
+      saveCachedRecords(latest);
+      return latest;
+    } catch {
+      // fallback to cached records when backend is temporarily unavailable
+      if (allowCacheFallback) {
+        const cached = loadCachedRecords();
+        setRecords(cached);
+        return cached;
+      }
+      throw new Error("Failed to refresh dataset from backend");
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
-  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+  useEffect(() => {
+    const cached = loadCachedRecords();
+    if (cached.length > 0) {
+      setRecords(cached);
+    }
+    fetchRecords(true);
+  }, [fetchRecords]);
 
   // Debounced real-time search
   useEffect(() => {
@@ -78,7 +124,13 @@ export default function SearchPage() {
       if (r.inserted) {
         setAddMsg({ type: "success", text: `✓ Record added (id: ${r.id}, lang: ${r.language})` });
         setAddText("");
-        fetchRecords();
+        const optimistic: DDRecord = { id: r.id, text: r.text, language: r.language };
+        setRecords((prev) => {
+          const next = [optimistic, ...prev.filter((x) => x.id !== optimistic.id)];
+          saveCachedRecords(next);
+          return next;
+        });
+        await fetchRecords(true);
       } else {
         setAddMsg({
           type: "warn",
@@ -94,7 +146,12 @@ export default function SearchPage() {
 
   const handleDelete = async (id: string) => {
     await deleteRecord(id);
-    fetchRecords();
+    setRecords((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      saveCachedRecords(next);
+      return next;
+    });
+    await fetchRecords(true);
   };
 
   interface ExtractedRecord {
@@ -104,6 +161,73 @@ export default function SearchPage() {
     amount?: string;
     language?: string;
   }
+
+  const uploadRecordsFast = async (
+    recordsToUpload: ExtractedRecord[],
+    threshold01: number
+  ) => {
+    if (recordsToUpload.length === 0) {
+      return { total: 0, added: 0, duplicates: 0, failed: 0, results: [] as Array<unknown> };
+    }
+
+    const total = recordsToUpload.length;
+    const chunkSize = Math.max(500, defaultBulkChunkSize());
+    const concurrency = Math.min(4, Math.max(1, Math.ceil(total / 2000)));
+    const chunks: ExtractedRecord[][] = [];
+    for (let i = 0; i < total; i += chunkSize) {
+      chunks.push(recordsToUpload.slice(i, i + chunkSize));
+    }
+
+    const aggregate = { total, added: 0, duplicates: 0, failed: 0, results: [] as Array<unknown> };
+    let nextChunk = 0;
+    let doneRows = 0;
+
+    const bumpProgress = (doneDelta: number) => {
+      doneRows = Math.min(total, doneRows + doneDelta);
+      setCsvProgress({
+        done: doneRows,
+        total,
+        added: aggregate.added,
+        duplicates: aggregate.duplicates,
+        failed: aggregate.failed,
+      });
+    };
+
+    const worker = async () => {
+      while (true) {
+        const idx = nextChunk++;
+        if (idx >= chunks.length) return;
+        const chunk = chunks[idx];
+
+        try {
+          const r = await addRecordsBulkServer({ records: chunk }, threshold01);
+          aggregate.added += r.added;
+          aggregate.duplicates += r.duplicates;
+          aggregate.failed += r.failed;
+          aggregate.results.push(...r.results);
+          bumpProgress(chunk.length);
+        } catch {
+          // Reliable fallback path per failed chunk.
+          try {
+            const rr = await addRecordsBulkServerChunked(chunk, {
+              chunkSize: Math.max(200, Math.floor(chunk.length / 2)),
+              threshold: threshold01,
+            });
+            aggregate.added += rr.added;
+            aggregate.duplicates += rr.duplicates;
+            aggregate.failed += rr.failed;
+            aggregate.results.push(...rr.results);
+          } catch {
+            aggregate.failed += chunk.length;
+          }
+          bumpProgress(chunk.length);
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker()));
+    return aggregate;
+  };
 
   const extractCsvTexts = async (file: File): Promise<ExtractedRecord[]> => {
     const parseWithHeader = () =>
@@ -212,15 +336,20 @@ export default function SearchPage() {
       }
 
       setCsvProgress({ done: 0, total: records.length, added: 0, duplicates: 0, failed: 0 });
-      const result = await addRecordsBulkServerChunked(records, {
-        chunkSize: defaultBulkChunkSize(),
-        threshold: threshold / 100,
-        onProgress: (p) => setCsvProgress(p),
+      const threshold01 = threshold / 100;
+      const result = await uploadRecordsFast(records, threshold01);
+
+      setCsvProgress({
+        done: result.total,
+        total: result.total,
+        added: result.added,
+        duplicates: result.duplicates,
+        failed: result.failed,
       });
 
       const summary = `Added ${result.added}/${result.total}. Duplicates: ${result.duplicates}. Failed: ${result.failed}.`;
       setCsvMsg(result.failed > 0 ? { type: "warn", text: summary } : { type: "success", text: summary });
-      fetchRecords();
+      await fetchRecords(true);
     } catch (e: unknown) {
       setCsvMsg({ type: "error", text: e instanceof Error ? e.message : "CSV upload failed" });
     } finally {
@@ -440,8 +569,12 @@ export default function SearchPage() {
         <div className={`card ${styles.rightCard}`}>
           <div className={styles.rightHeader}>
             <h3 className={styles.rightTitle}>Dataset ({records.length})</h3>
-            <button className={`btn btn-ghost ${styles.refreshBtn}`} onClick={fetchRecords}>
-              ↻ Refresh
+            <button
+              className={`btn btn-ghost ${styles.refreshBtn}`}
+              onClick={() => { void fetchRecords(false); }}
+              disabled={refreshing}
+            >
+              {refreshing ? "⟳ Refreshing..." : "↻ Refresh"}
             </button>
           </div>
 

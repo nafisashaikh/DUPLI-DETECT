@@ -2,6 +2,7 @@
 import React, { useState, useRef } from "react";
 import styles from "./upload.module.css";
 import toast from "@/lib/toast";
+import { processPDF } from "@/lib/api";
 
 interface PDFProcessResult {
   filename: string;
@@ -119,39 +120,15 @@ export default function UploadPage() {
 
     setUploading(true);
     setError(null);
+    setProgress(0);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      // Build URL with query parameters
-      const params = new URLSearchParams();
-      params.append('deduplicate', deduplicate.toString());
-      params.append('threshold', (threshold / 100).toString());
-
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
-      const url = `${baseUrl}/process-pdf?${params.toString()}`;
-      const xhr = new XMLHttpRequest();
-      const response = await new Promise<Response>((resolve, reject) => {
-        xhr.open('POST', url, true);
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 100));
-        };
-        xhr.onload = () => {
-          const status = xhr.status;
-          const text = xhr.responseText;
-          resolve({ ok: status >= 200 && status < 300, status, text: async () => text, json: async () => JSON.parse(text) } as unknown as Response);
-        };
-        xhr.onerror = () => reject(new Error('Network error'));
-        xhr.send(formData);
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Upload failed: ${response.status} ${errorText}`);
-      }
-
-      const data: PDFProcessResult = await response.json();
+      // Use shared API client so runtime base + fallback hosts are handled consistently.
+      const data = await processPDF(file, {
+        deduplicate,
+        threshold: threshold / 100,
+      }) as PDFProcessResult;
+      setProgress(100);
       setResult(data);
       try { toast('PDF processed successfully', { type: 'success' }); } catch {}
 
@@ -382,7 +359,7 @@ export default function UploadPage() {
                   )}
                   {item.top_match && (
                     <div className={styles.match}>
-                      Similar to: "{item.top_match.text}" ({item.top_match.similarity}% similarity)
+                      Similar to: &quot;{item.top_match.text}&quot; ({item.top_match.similarity}% similarity)
                     </div>
                   )}
                 </div>

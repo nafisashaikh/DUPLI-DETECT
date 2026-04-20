@@ -1,9 +1,32 @@
 "use client";
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { searchSimilar, listRecords, exportCSV, clusterTexts } from "@/lib/api";
-import type { Record as DDRecord, SearchMatch } from "@/lib/types";
+import { listRecords, exportCSV, clusterTexts } from "@/lib/api";
+import type { Record as DDRecord } from "@/lib/types";
 import ExportButton from "@/src/components/ExportButton";
 import styles from "./dashboard.module.css";
+
+const RECORDS_CACHE_KEY = "duplidetect_records_cache_v1";
+
+function loadCachedRecords(): DDRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(RECORDS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedRecords(records: DDRecord[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(RECORDS_CACHE_KEY, JSON.stringify(records));
+  } catch {
+    // ignore storage failures
+  }
+}
 
 // ─── D3 graph types (minimal, avoid full import in SSR) ───────────────────
 interface GraphNode extends DDRecord {
@@ -51,26 +74,22 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      // For each record, get its similar matches
-      const edgesRaw: { a: number; b: number; w: number }[] = [];
-      const promises = recs.map((r, i) =>
-        searchSimilar(r.text, thresh / 100).then((res) => ({ i, matches: res.matches }))
-      );
-      const results = await Promise.all(promises);
-      results.forEach(({ i, matches }) => {
-        matches.forEach((m: SearchMatch) => {
-          const j = recs.findIndex((r) => r.id === m.id);
-          if (j !== -1 && j !== i && !edgesRaw.find((e) => (e.a === j && e.b === i))) {
-            edgesRaw.push({ a: i, b: j, w: m.similarity / 100 });
-          }
-        });
-      });
-
-      // Use DBSCAN implementation from /cluster via shared API client.
-      const clusterData = await clusterTexts(
-        recs.map((r) => r.text),
-        Math.max(0.01, 1 - (thresh / 100)),
-      );
+      // Build graph from one cluster call only to avoid /search request storms.
+      let clusterData = { groups: [] as Array<{ group_id: number; items: Array<{ id: string }> }> };
+      try {
+        clusterData = await clusterTexts(
+          recs.map((r) => r.text),
+          Math.max(0.01, 1 - (thresh / 100)),
+        );
+      } catch {
+        // If clustering API is temporarily unavailable, fallback to one-node-per-group.
+        clusterData = {
+          groups: recs.map((_, idx) => ({
+            group_id: idx,
+            items: [{ id: String(idx) }],
+          })),
+        };
+      }
       
       const nodeToGroup: number[] = new Array(recs.length).fill(-1);
       let maxGroup = 0;
@@ -92,6 +111,26 @@ export default function DashboardPage() {
         }
       });
       const groups = nodeToGroup;
+
+      // Create lightweight intra-cluster chain edges (O(n)) instead of O(n^2) search API calls.
+      const byGroup = new Map<number, number[]>();
+      groups.forEach((g, i) => {
+        const arr = byGroup.get(g) ?? [];
+        arr.push(i);
+        byGroup.set(g, arr);
+      });
+
+      const edgesRaw: { a: number; b: number; w: number }[] = [];
+      byGroup.forEach((indices) => {
+        if (indices.length < 2) return;
+        for (let idx = 0; idx < indices.length - 1; idx += 1) {
+          const a = indices[idx];
+          const b = indices[idx + 1];
+          const weight = 0.65 + Math.min(0.34, thresh / 200);
+          edgesRaw.push({ a, b, w: weight });
+        }
+      });
+
       const W = canvasRef.current?.width ?? 800;
       const H = canvasRef.current?.height ?? 500;
       const cx = W / 2, cy = H / 2;
@@ -136,15 +175,23 @@ export default function DashboardPage() {
     try {
       const recs = await listRecords();
       setRecords(recs);
+      saveCachedRecords(recs);
       await buildGraph(recs, threshold);
       setError(null);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to load records");
-      setRecords([]);
-      setGraphNodes([]);
-      setGraphEdges([]);
-      nodesRef.current = [];
-      setStats({ nodes: 0, edges: 0, groups: 0 });
+      const cached = loadCachedRecords();
+      if (cached.length > 0) {
+        setRecords(cached);
+        await buildGraph(cached, threshold);
+        setError(null);
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to load records");
+        setRecords([]);
+        setGraphNodes([]);
+        setGraphEdges([]);
+        nodesRef.current = [];
+        setStats({ nodes: 0, edges: 0, groups: 0 });
+      }
     } finally {
       setLoading(false);
     }
